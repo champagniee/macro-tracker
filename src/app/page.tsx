@@ -1,69 +1,102 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useState } from "react";
+import { Beef, Wheat, Droplet, Plus } from "lucide-react";
+import { toast } from "sonner";
+import { CalorieRing } from "@/components/rings/calorie-ring";
+import { MacroBar } from "@/components/rings/macro-bar";
+import { MealSection } from "@/components/meals/meal-section";
+import { AddFoodSheet } from "@/components/add-food/add-food-sheet";
+import { useGoals } from "@/components/goals-provider";
+import { useLocalStorage } from "@/lib/use-local-storage";
+import { INITIAL_ENTRIES, MEAL_ORDER } from "@/lib/mock-data";
+import type { FoodEntry, MealType } from "@/lib/types";
+
+const TODAY_LABEL = new Intl.DateTimeFormat("en-US", {
+  weekday: "long",
+  month: "long",
+  day: "numeric",
+}).format(new Date());
+
+export default function TodayPage() {
+  const { goals } = useGoals();
+  const [entries, setEntries] = useLocalStorage<FoodEntry[]>(
+    "macro-tracker:entries",
+    INITIAL_ENTRIES,
+  );
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [activeMeal, setActiveMeal] = useState<MealType>("Breakfast");
+
+  const totals = entries.reduce(
+    (acc, e) => ({
+      calories: acc.calories + e.calories,
+      protein: acc.protein + e.protein,
+      carbs: acc.carbs + e.carbs,
+      fat: acc.fat + e.fat,
+    }),
+    { calories: 0, protein: 0, carbs: 0, fat: 0 },
+  );
+
+  function openSheet(meal: MealType) {
+    setActiveMeal(meal);
+    setSheetOpen(true);
+  }
+
+  function handleAdd(entry: Omit<FoodEntry, "id">) {
+    setEntries((prev) => [...prev, { ...entry, id: crypto.randomUUID() }]);
+    toast.success(`Added ${entry.name} to ${entry.meal}`);
+  }
+
+  function handleDelete(id: string) {
+    setEntries((prev) => prev.filter((e) => e.id !== id));
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <>
+      <header className="flex items-center justify-between px-5 pt-[calc(env(safe-area-inset-top)+16px)] pb-2 lg:px-0 lg:pt-0 lg:pb-6">
+        <div>
+          <p className="text-[13px] font-medium text-muted">{TODAY_LABEL}</p>
+          <h1 className="text-[22px] font-semibold tracking-tight lg:text-[28px]">Today</h1>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
+      </header>
+
+      <div className="flex flex-col gap-5 px-5 pb-28 lg:grid lg:grid-cols-[360px_1fr] lg:items-start lg:gap-8 lg:px-0 lg:pb-8">
+        <div className="flex flex-col items-center gap-5 rounded-[var(--radius-card)] bg-surface py-6 shadow-[var(--shadow-card)] lg:sticky lg:top-8">
+          <CalorieRing consumed={totals.calories} goal={goals.calories} />
+          <div className="grid w-full grid-cols-3 gap-2 px-4">
+            <MacroBar label="Protein" value={totals.protein} goal={goals.protein} color="var(--protein)" icon={Beef} />
+            <MacroBar label="Carbs" value={totals.carbs} goal={goals.carbs} color="var(--carbs)" icon={Wheat} />
+            <MacroBar label="Fat" value={totals.fat} goal={goals.fat} color="var(--fat)" icon={Droplet} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-1 lg:gap-4 xl:grid-cols-2">
+          {MEAL_ORDER.map((meal) => (
+            <MealSection
+              key={meal}
+              meal={meal}
+              entries={entries.filter((e) => e.meal === meal)}
+              onAdd={openSheet}
+              onDelete={handleDelete}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+          ))}
         </div>
-      </main>
-    </div>
+      </div>
+
+      <button
+        onClick={() => openSheet("Breakfast")}
+        aria-label="Add food"
+        className="fixed bottom-[calc(64px+env(safe-area-inset-bottom)+16px)] right-5 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-[0_8px_24px_-6px_rgba(0,122,255,0.5)] transition-transform active:scale-90 lg:bottom-8 lg:right-8"
+      >
+        <Plus size={26} strokeWidth={2.3} />
+      </button>
+
+      <AddFoodSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        defaultMeal={activeMeal}
+        onSubmit={handleAdd}
+      />
+    </>
   );
 }

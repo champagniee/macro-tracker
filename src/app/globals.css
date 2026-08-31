@@ -1,26 +1,134 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f2f2f7;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --foreground: #000000;
+  --muted: #6e6e73;
+  --muted-2: #8e8e93;
+  --separator: rgba(60, 60, 67, 0.12);
+  --separator-opaque: #e5e5ea;
+
+  --accent: #007aff;
+  --calories: #ff375f;
+  --protein: #0a84ff;
+  --carbs: #ff9f0a;
+  --fat: #bf5af2;
+  --success: #30d158;
+
+  --ring-track: rgba(60, 60, 67, 0.08);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.12);
+  --shadow-sheet: 0 -8px 40px rgba(0, 0, 0, 0.18);
+
+  --radius-card: 20px;
+  --radius-control: 14px;
+  --radius-pill: 999px;
+
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
+  --color-separator: var(--separator);
+  --color-separator-opaque: var(--separator-opaque);
+
+  --color-accent: var(--accent);
+  --color-calories: var(--calories);
+  --color-protein: var(--protein);
+  --color-carbs: var(--carbs);
+  --color-fat: var(--fat);
+  --color-success: var(--success);
+
+  --color-ring-track: var(--ring-track);
+
+  --font-sans: var(--font-system);
+
+  --radius-card: var(--radius-card);
+  --radius-control: var(--radius-control);
+}
+
+:root[data-theme="dark"] {
+  --background: #000000;
+  --surface: #1c1c1e;
+  --surface-elevated: #2c2c2e;
+  --foreground: #ffffff;
+  --muted: #98989d;
+  --muted-2: #8e8e93;
+  --separator: rgba(84, 84, 88, 0.6);
+  --separator-opaque: #38383a;
+
+  --ring-track: rgba(120, 120, 128, 0.24);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  --shadow-sheet: 0 -8px 40px rgba(0, 0, 0, 0.5);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme="light"]) {
+    --background: #000000;
+    --surface: #1c1c1e;
+    --surface-elevated: #2c2c2e;
+    --foreground: #ffffff;
+    --muted: #98989d;
+    --muted-2: #8e8e93;
+    --separator: rgba(84, 84, 88, 0.6);
+    --separator-opaque: #38383a;
+
+    --ring-track: rgba(120, 120, 128, 0.24);
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+    --shadow-sheet: 0 -8px 40px rgba(0, 0, 0, 0.5);
   }
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  height: 100%;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-system);
+  min-height: 100%;
+  transition: background-color 200ms var(--ease-out-strong), color 200ms var(--ease-out-strong);
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
