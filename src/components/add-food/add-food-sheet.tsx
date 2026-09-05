@@ -6,7 +6,9 @@ import { Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { NumericField } from "@/components/ui/numeric-field";
-import { QUICK_ADD_SUGGESTIONS, MEAL_ORDER } from "@/lib/mock-data";
+import { useFoodSearch } from "@/components/food-search/use-food-search";
+import { FOOD_SOURCE_LABEL, type FoodSearchResult } from "@/components/food-search/types";
+import { MEAL_ORDER } from "@/lib/mock-data";
 import { useMediaQuery } from "@/lib/use-media-query";
 import type { FoodEntry, MealType } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -15,16 +17,36 @@ interface AddFoodSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultMeal: MealType;
+  entries: FoodEntry[];
   onSubmit: (entry: Omit<FoodEntry, "id">) => void;
 }
 
 const emptyForm = { name: "", serving: "", calories: "", protein: "", carbs: "", fat: "" };
+const RECENT_FOODS_LIMIT = 6;
 
-export function AddFoodSheet({ open, onOpenChange, defaultMeal, onSubmit }: AddFoodSheetProps) {
+// Most-recently-logged foods, deduped by name (case-insensitive), newest first.
+// Entries are always appended, so walking backwards is walking newest-to-oldest.
+function getRecentFoods(entries: FoodEntry[], limit: number): FoodEntry[] {
+  const seen = new Set<string>();
+  const recent: FoodEntry[] = [];
+  for (let i = entries.length - 1; i >= 0 && recent.length < limit; i--) {
+    const key = entries[i].name.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    recent.push(entries[i]);
+  }
+  return recent;
+}
+
+export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmit }: AddFoodSheetProps) {
   const desktop = useMediaQuery("(min-width: 1024px)");
   const [meal, setMeal] = useState<MealType>(defaultMeal);
   const [query, setQuery] = useState("");
   const [form, setForm] = useState(emptyForm);
+  // The catalog food (if any) currently backing the form, so it can be passed
+  // through as food_id on submit. Cleared whenever the name is hand-edited,
+  // since at that point the form no longer represents that catalog entry.
+  const [selectedFoodId, setSelectedFoodId] = useState<string | null>(null);
 
   // Reset the form whenever the sheet transitions to open, without doing it
   // in an effect (avoids an extra render pass just to clear stale fields).
@@ -35,6 +57,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, onSubmit }: AddF
       setMeal(defaultMeal);
       setForm(emptyForm);
       setQuery("");
+      setSelectedFoodId(null);
     }
   }
 
@@ -49,24 +72,48 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, onSubmit }: AddF
     };
   }, [open, onOpenChange]);
 
-  const suggestions = useMemo(() => {
-    if (!query.trim()) return QUICK_ADD_SUGGESTIONS;
-    return QUICK_ADD_SUGGESTIONS.filter((s) =>
-      s.name.toLowerCase().includes(query.trim().toLowerCase()),
-    );
-  }, [query]);
+  const recentFoods = useMemo(() => getRecentFoods(entries, RECENT_FOODS_LIMIT), [entries]);
+
+  // Once the user actually starts typing, real catalog search (USDA/Open Food
+  // Facts/custom foods) replaces the recent-foods chips — recent chips are the
+  // zero-effort "log what I always eat" path, search is for finding anything else.
+  const { results: searchResults, warnings: searchWarnings, loading: searching } = useFoodSearch(query);
+  const isSearching = query.trim().length >= 2;
 
   const canSubmit = form.name.trim().length > 0 && Number(form.calories) > 0;
 
-  function applySuggestion(s: (typeof QUICK_ADD_SUGGESTIONS)[number]) {
+  function applySuggestion(entry: FoodEntry) {
     setForm({
-      name: s.name,
-      serving: s.serving,
-      calories: String(s.calories),
-      protein: String(s.protein),
-      carbs: String(s.carbs),
-      fat: String(s.fat),
+      name: entry.name,
+      serving: entry.serving,
+      calories: String(entry.calories),
+      protein: String(entry.protein),
+      carbs: String(entry.carbs),
+      fat: String(entry.fat),
     });
+    setSelectedFoodId(entry.foodId ?? null);
+  }
+
+  // Catalog results are stored per-100 base units — scale to the food's own
+  // serving size (falling back to 100, i.e. "per 100g/ml") for the logged amount.
+  function applyFoodResult(food: FoodSearchResult) {
+    const amount = food.servingSize ?? 100;
+    const factor = amount / 100;
+    setForm({
+      name: food.name,
+      serving: food.servingLabel || `${amount} ${food.baseUnit}`,
+      calories: String(Math.round(food.caloriesPer100 * factor)),
+      protein: String(Math.round(food.proteinPer100 * factor)),
+      carbs: String(Math.round(food.carbsPer100 * factor)),
+      fat: String(Math.round(food.fatPer100 * factor)),
+    });
+    setSelectedFoodId(food.id);
+    setQuery("");
+  }
+
+  function handleNameChange(value: string) {
+    setForm((f) => ({ ...f, name: value }));
+    setSelectedFoodId(null);
   }
 
   function handleSubmit() {
@@ -79,6 +126,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, onSubmit }: AddF
       protein: Number(form.protein) || 0,
       carbs: Number(form.carbs) || 0,
       fat: Number(form.fat) || 0,
+      foodId: selectedFoodId ?? undefined,
     });
     onOpenChange(false);
   }
@@ -115,24 +163,71 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, onSubmit }: AddF
         />
       </div>
 
-      {suggestions.length > 0 && (
+      {!isSearching && recentFoods.length > 0 && (
         <div className="mb-5 -mx-5 overflow-x-auto no-scrollbar">
+          <p className="mb-2 px-5 text-[12px] font-medium text-muted">Recently logged</p>
           <div className="flex gap-2 px-5">
-            {suggestions.map((s) => (
+            {recentFoods.map((entry) => (
               <button
-                key={s.name}
-                onClick={() => applySuggestion(s)}
+                key={entry.name}
+                onClick={() => applySuggestion(entry)}
                 className={cn(
                   "shrink-0 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-transform active:scale-95",
-                  form.name === s.name
+                  form.name === entry.name
                     ? "border-accent bg-accent/10 text-accent"
                     : "border-separator bg-surface text-foreground",
                 )}
               >
-                {s.name}
+                {entry.name}
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {isSearching && (
+        <div className="mb-5 flex flex-col gap-2">
+          {searching && <p className="px-1 text-[12px] text-muted-2">Searching…</p>}
+
+          {!searching && searchWarnings.length > 0 && (
+            <p className="px-1 text-[12px]" style={{ color: "var(--calories)" }}>
+              {searchWarnings.join(" · ")}
+              {searchResults.length > 0 ? " — results may be incomplete." : " Try again in a moment."}
+            </p>
+          )}
+
+          {!searching && searchResults.length > 0 && (
+            <div className="no-scrollbar flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+              {searchResults.map((food) => (
+                <button
+                  key={food.id}
+                  type="button"
+                  onClick={() => applyFoodResult(food)}
+                  className={cn(
+                    "flex items-center justify-between gap-3 rounded-[12px] border px-3 py-2.5 text-left transition-transform active:scale-[0.98]",
+                    selectedFoodId === food.id
+                      ? "border-accent bg-accent/10"
+                      : "border-separator bg-surface",
+                  )}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-[14px] font-medium">{food.name}</p>
+                    <p className="truncate text-[12px] text-muted">
+                      {food.brand ? `${food.brand} · ` : ""}
+                      {FOOD_SOURCE_LABEL[food.source]}
+                    </p>
+                  </div>
+                  <p className="shrink-0 text-[12px] tabular-nums text-muted">
+                    {Math.round(food.caloriesPer100)} kcal/100{food.baseUnit}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {!searching && searchWarnings.length === 0 && searchResults.length === 0 && (
+            <p className="px-1 text-[12px] text-muted-2">No matches found — enter it manually below.</p>
+          )}
         </div>
       )}
 
@@ -141,7 +236,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, onSubmit }: AddF
           <span className="text-[12px] font-medium text-muted">Food name</span>
           <input
             value={form.name}
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            onChange={(e) => handleNameChange(e.target.value)}
             placeholder="e.g. Chicken Caesar Salad"
             className="rounded-[12px] bg-ring-track px-3 py-2.5 text-[15px] font-medium outline-none placeholder:text-muted-2 placeholder:font-normal focus:ring-2 focus:ring-accent/50"
           />

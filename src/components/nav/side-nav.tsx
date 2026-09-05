@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { House, CalendarDays, Settings, Flame } from "lucide-react";
+import { House, CalendarDays, ChefHat, Settings, Flame } from "lucide-react";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/", label: "Today", icon: House },
   { href: "/history", label: "History", icon: CalendarDays },
+  { href: "/recipes", label: "Recipes", icon: ChefHat },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -16,11 +18,14 @@ export function SideNav() {
 
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-separator bg-surface/60 backdrop-blur-xl backdrop-saturate-150 lg:flex">
-      <div className="flex items-center gap-2 px-6 pt-8 pb-6">
-        <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-accent text-white">
-          <Flame size={16} strokeWidth={2.5} />
-        </span>
-        <span className="text-[17px] font-semibold tracking-tight">Macro Tracker</span>
+      <div className="flex items-center justify-between px-6 pt-8 pb-6">
+        <div className="flex items-center gap-2">
+          <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-accent text-white">
+            <Flame size={16} strokeWidth={2.5} />
+          </span>
+          <span className="text-[17px] font-semibold tracking-tight">Macro Tracker</span>
+        </div>
+        <ThemeToggle className="h-8 w-8" />
       </div>
 
       <nav className="flex flex-col gap-1 px-3" aria-label="Primary">
@@ -45,7 +50,7 @@ export function SideNav() {
       </nav>
 
       <div className="mt-auto px-6 pb-8 pt-4 text-[12px] leading-5 text-muted-2">
-        Food logging is stored on this device for now — Neon + MCP sync are coming.
+        Your food log, goals, and recipes sync to your account.
       </div>
     </aside>
   );
