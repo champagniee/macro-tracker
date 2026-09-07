@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -156,8 +157,20 @@ export default function SettingsPage() {
           )}
         </section>
 
-        <section className="flex flex-col gap-2 rounded-[var(--radius-card)] bg-surface p-4 shadow-[var(--shadow-card)] lg:p-6">
-          <h2 className="text-[15px] font-semibold">About</h2>
+        <section className="flex flex-col gap-3 rounded-[var(--radius-card)] bg-surface p-4 shadow-[var(--shadow-card)] lg:p-6">
+          <div className="flex items-center gap-2.5">
+            <Image
+              src="/icon.png"
+              alt=""
+              width={36}
+              height={36}
+              className="h-9 w-9 shrink-0 rounded-[9px]"
+            />
+            <div>
+              <p className="text-[15px] font-semibold leading-tight">Macra</p>
+              <p className="text-[12px] text-muted-2">Track Your Macros</p>
+            </div>
+          </div>
           <p className="text-[13px] leading-5 text-muted">
             Your food log and goals sync to your account. Auto-import from recipes and
             photos, plus synced macro lookups, are coming via a connected service.

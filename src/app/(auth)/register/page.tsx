@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
 import { GoogleButton } from "@/components/auth/google-button";
+import { AuthLogo } from "@/components/auth/auth-logo";
 import { useAuth } from "@/components/auth-provider";
 
 export default function RegisterPage() {
@@ -62,9 +63,12 @@ export default function RegisterPage() {
 
   return (
     <div className="flex flex-col gap-5 rounded-[var(--radius-card)] bg-surface p-6 shadow-[var(--shadow-card)]">
-      <div>
-        <h1 className="text-[20px] font-semibold tracking-tight">Create an account</h1>
-        <p className="mt-1 text-[13px] text-muted">Track your macros across every device.</p>
+      <div className="flex flex-col items-center gap-4 text-center">
+        <AuthLogo />
+        <div>
+          <h1 className="text-[20px] font-semibold tracking-tight">Create an account</h1>
+          <p className="mt-1 text-[13px] text-muted">Track your macros across every device.</p>
+        </div>
       </div>
 
       <GoogleButton label="Sign up with Google" />

@@ -23,7 +23,7 @@ export function SideNav() {
           <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-accent text-white">
             <Flame size={16} strokeWidth={2.5} />
           </span>
-          <span className="text-[17px] font-semibold tracking-tight">Macro Tracker</span>
+          <span className="text-[17px] font-semibold tracking-tight">Macra</span>
         </div>
         <ThemeToggle className="h-8 w-8" />
       </div>

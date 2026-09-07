@@ -1,5 +1,11 @@
 # TODO
 
+## Rebrand: Macro Tracker → Macra
+
+- [x] Renamed the app "Macra", tagline "Track Your Macros" — updated everywhere user-facing: `<title>`/meta description (`src/app/layout.tsx`), the shared auth-page wordmark (`src/app/(auth)/layout.tsx`, now logo+name with the tagline underneath instead of just the name), the desktop sidebar wordmark (`src/components/nav/side-nav.tsx`), and `README.md`'s title. Verified live: rendered HTML confirmed the new title/tagline and zero remaining occurrences of "Macro Tracker"
+- [x] New accent color: muted sage green `#3e8967` (`--accent` in `globals.css`), replacing iOS blue everywhere it's used (buttons, links, active nav state, focus rings, segmented control indicator) — one variable, so it propagates everywhere automatically. Deliberately left the macro data-viz colors (protein/carbs/fat/calories/calories-over) untouched — those carry specific meaning independent of brand color, changing them wasn't asked and would break the established visual vocabulary
+- [ ] **Not touched, worth knowing about**: `src/app/favicon.ico` is still Next.js's unbranded default (a real icon needs actual image asset work, not just a code edit); the MCP server's registered name (`mcp-server/index.ts`, `"macro-tracker"`) and `.mcp.json`'s key still say "macro-tracker" — left alone since renaming it would require reconnecting/reconfiguring the MCP client, and that's an internal technical identifier, not user-facing branding; `package.json`'s `"name"` field is likewise still `"macro-tracker"` (npm/internal only, no user visibility)
+
 ## Scaling to multiple users (audit, 2026-09-07 — before sharing with friends)
 
 Not yet implemented, just findings — user asked for a heads-up before inviting friends to use the app for real. Ranked by what actually blocks/hurts sharing, not file order.

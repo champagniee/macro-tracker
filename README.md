@@ -1,4 +1,4 @@
-# Macro Tracker
+# Macra
 
 A calorie and macro tracking web app. Next.js (App Router) full-stack, Neon Postgres (via Drizzle) for data, MCP integration planned for auto-importing food/recipes and fetching macros from an external service.
 

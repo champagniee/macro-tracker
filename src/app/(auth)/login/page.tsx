@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
 import { GoogleButton } from "@/components/auth/google-button";
+import { AuthLogo } from "@/components/auth/auth-logo";
 import { useAuth } from "@/components/auth-provider";
 
 function LoginForm() {
@@ -59,9 +60,12 @@ function LoginForm() {
 
   return (
     <div className="flex flex-col gap-5 rounded-[var(--radius-card)] bg-surface p-6 shadow-[var(--shadow-card)]">
-      <div>
-        <h1 className="text-[20px] font-semibold tracking-tight">Log in</h1>
-        <p className="mt-1 text-[13px] text-muted">Welcome back. Enter your details below.</p>
+      <div className="flex flex-col items-center gap-4 text-center">
+        <AuthLogo />
+        <div>
+          <h1 className="text-[20px] font-semibold tracking-tight">Log in</h1>
+          <p className="mt-1 text-[13px] text-muted">Welcome back. Enter your details below.</p>
+        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">

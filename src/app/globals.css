@@ -10,7 +10,9 @@
   --separator: rgba(60, 60, 67, 0.12);
   --separator-opaque: #e5e5ea;
 
-  --accent: #007aff;
+  /* Macra brand green — muted/sage rather than a bright system green, so it
+     stays calm as a fill (buttons) and as text (links, active nav) alike. */
+  --accent: #3e8967;
   --calories: #ff375f;
   --calories-over: #d70015;
   --protein: #0a84ff;
