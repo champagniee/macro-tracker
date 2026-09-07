@@ -19,7 +19,10 @@ export async function POST(request: Request) {
   const { email, password } = parsed.data;
 
   const user = await db.query.users.findFirst({ where: eq(users.email, email) });
-  if (!user || !(await verifyPassword(password, user.passwordHash))) {
+  if (!user || !user.passwordHash) {
+    return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
+  }
+  if (!(await verifyPassword(password, user.passwordHash))) {
     return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
   }
 

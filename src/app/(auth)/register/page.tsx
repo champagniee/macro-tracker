@@ -7,11 +7,13 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
+import { GoogleButton } from "@/components/auth/google-button";
 import { useAuth } from "@/components/auth-provider";
 
 export default function RegisterPage() {
   const router = useRouter();
   const { user, loading, refresh } = useAuth();
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -40,7 +42,7 @@ export default function RegisterPage() {
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ name, email, password }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -48,7 +50,7 @@ export default function RegisterPage() {
         return;
       }
       await refresh();
-      toast.success("Account created");
+      toast.success(`Welcome, ${data.user.name}!`);
       router.push("/");
       router.refresh();
     } catch {
@@ -65,7 +67,28 @@ export default function RegisterPage() {
         <p className="mt-1 text-[13px] text-muted">Track your macros across every device.</p>
       </div>
 
+      <GoogleButton label="Sign up with Google" />
+
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1 bg-separator" />
+        <span className="text-[12px] text-muted-2">or</span>
+        <div className="h-px flex-1 bg-separator" />
+      </div>
+
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[12px] font-medium text-muted">Name</span>
+          <input
+            type="text"
+            required
+            autoComplete="given-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Your first name"
+            className="rounded-[12px] bg-ring-track px-3 py-2.5 text-[15px] outline-none placeholder:text-muted-2 focus:ring-2 focus:ring-accent/50"
+          />
+        </label>
+
         <label className="flex flex-col gap-1">
           <span className="text-[12px] font-medium text-muted">Email</span>
           <input

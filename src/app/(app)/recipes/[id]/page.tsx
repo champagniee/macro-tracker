@@ -28,6 +28,9 @@ interface RecipeDetail {
   id: string;
   name: string;
   servings: number;
+  isPublic: boolean;
+  isOwner: boolean;
+  ownerName: string;
   ingredients: RecipeIngredient[];
   macros: {
     totalCalories: number;
@@ -50,6 +53,7 @@ export default function RecipeDetailPage() {
   const [meal, setMeal] = useState<MealType>("Breakfast");
   const [logging, setLogging] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [togglingVisibility, setTogglingVisibility] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,6 +103,28 @@ export default function RecipeDetailPage() {
     }
   }
 
+  async function handleVisibilityChange(value: "Private" | "Public") {
+    if (!recipe) return;
+    const isPublic = value === "Public";
+    const previous = recipe.isPublic;
+    setRecipe({ ...recipe, isPublic });
+    setTogglingVisibility(true);
+    try {
+      const res = await fetch(`/api/recipes/${recipe.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPublic }),
+      });
+      if (!res.ok) throw new Error("Failed to update");
+      toast.success(isPublic ? "Recipe is now public" : "Recipe is now private");
+    } catch {
+      setRecipe((r) => (r ? { ...r, isPublic: previous } : r));
+      toast.error("Couldn't update visibility. Please try again.");
+    } finally {
+      setTogglingVisibility(false);
+    }
+  }
+
   async function handleDelete() {
     if (!recipe) return;
     setDeleting(true);
@@ -140,17 +166,20 @@ export default function RecipeDetailPage() {
             ← Recipes
           </Link>
           <h1 className="truncate text-[22px] font-semibold tracking-tight lg:text-[28px]">{recipe.name}</h1>
+          {!recipe.isOwner && <p className="text-[12px] text-muted">by {recipe.ownerName}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <ThemeToggle className="h-9 w-9 lg:hidden" />
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            aria-label="Delete recipe"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-ring-track text-muted transition-transform active:scale-90 disabled:opacity-40"
-          >
-            <Trash2 size={16} />
-          </button>
+          {recipe.isOwner && (
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              aria-label="Delete recipe"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-ring-track text-muted transition-transform active:scale-90 disabled:opacity-40"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       </header>
 
@@ -184,6 +213,24 @@ export default function RecipeDetailPage() {
               {recipe.servings} serving{recipe.servings === 1 ? "" : "s"} total
             </p>
           </section>
+
+          {recipe.isOwner && (
+            <section className="flex flex-col gap-2 rounded-[var(--radius-card)] bg-surface p-4 shadow-[var(--shadow-card)] lg:p-6">
+              <h2 className="text-[15px] font-semibold">Visibility</h2>
+              <SegmentedControl
+                options={["Private", "Public"] as const}
+                value={recipe.isPublic ? "Public" : "Private"}
+                onChange={handleVisibilityChange}
+              />
+              <p className="text-[12px] text-muted-2">
+                {togglingVisibility
+                  ? "Updating…"
+                  : recipe.isPublic
+                    ? "Anyone can view this recipe and log a serving."
+                    : "Only you can see this recipe."}
+              </p>
+            </section>
+          )}
 
           <section className="flex flex-col gap-3 rounded-[var(--radius-card)] bg-surface p-4 shadow-[var(--shadow-card)] lg:p-6">
             <h2 className="text-[15px] font-semibold">Log a serving</h2>

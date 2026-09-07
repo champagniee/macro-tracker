@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { email, password } = parsed.data;
+  const { name, email, password } = parsed.data;
 
   const existing = await db.query.users.findFirst({ where: eq(users.email, email) });
   if (existing) {
@@ -29,8 +29,8 @@ export async function POST(request: Request) {
   const passwordHash = await hashPassword(password);
   const [user] = await db
     .insert(users)
-    .values({ email, passwordHash })
-    .returning({ id: users.id, email: users.email });
+    .values({ name, email, passwordHash })
+    .returning({ id: users.id, email: users.email, name: users.name });
 
   await createSession({ sub: user.id, email: user.email });
 

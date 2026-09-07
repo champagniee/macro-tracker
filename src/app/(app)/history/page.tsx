@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { MiniRing } from "@/components/rings/mini-ring";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { DayDetailSheet } from "@/components/history/day-detail-sheet";
 import { formatNumber } from "@/lib/utils";
 
 interface HistoryDay {
@@ -18,6 +19,7 @@ interface HistoryDay {
 export default function HistoryPage() {
   const [history, setHistory] = useState<HistoryDay[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedDay, setSelectedDay] = useState<HistoryDay | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,9 +58,11 @@ export default function HistoryPage() {
               const over = day.calories > day.goal;
               const diff = Math.abs(day.calories - day.goal);
               return (
-                <div
+                <button
                   key={day.date}
-                  className="flex items-center gap-3 rounded-[var(--radius-card)] bg-surface px-4 py-3.5 shadow-[var(--shadow-card)]"
+                  type="button"
+                  onClick={() => setSelectedDay(day)}
+                  className="flex w-full items-center gap-3 rounded-[var(--radius-card)] bg-surface px-4 py-3.5 text-left shadow-[var(--shadow-card)] transition-transform active:scale-[0.98]"
                 >
                   <MiniRing
                     progress={day.goal > 0 ? day.calories / day.goal : 0}
@@ -80,10 +84,15 @@ export default function HistoryPage() {
                       {formatNumber(diff)}
                     </p>
                   </div>
-                </div>
+                </button>
               );
             })}
       </div>
+
+      <DayDetailSheet
+        date={selectedDay?.date ?? null}
+        onOpenChange={(open) => !open && setSelectedDay(null)}
+      />
     </>
   );
 }

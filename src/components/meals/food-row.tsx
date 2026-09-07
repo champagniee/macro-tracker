@@ -6,7 +6,9 @@ import { formatNumber } from "@/lib/utils";
 
 interface FoodRowProps {
   entry: FoodEntry;
-  onDelete: (id: string) => void;
+  // Omit to render read-only (no delete button) — used by History's
+  // day-detail view, where past entries aren't editable.
+  onDelete?: (id: string) => void;
 }
 
 export function FoodRow({ entry, onDelete }: FoodRowProps) {
@@ -30,13 +32,15 @@ export function FoodRow({ entry, onDelete }: FoodRowProps) {
         <span className="text-[15px] font-semibold tabular-nums">
           {formatNumber(entry.calories)}
         </span>
-        <button
-          onClick={() => onDelete(entry.id)}
-          aria-label={`Remove ${entry.name}`}
-          className="h-6 w-6 shrink-0 rounded-full text-[13px] text-muted-2 opacity-50 transition-opacity duration-150 group-hover:opacity-100 active:scale-90"
-        >
-          ✕
-        </button>
+        {onDelete && (
+          <button
+            onClick={() => onDelete(entry.id)}
+            aria-label={`Remove ${entry.name}`}
+            className="h-6 w-6 shrink-0 rounded-full text-[13px] text-muted-2 opacity-50 transition-opacity duration-150 group-hover:opacity-100 active:scale-90"
+          >
+            ✕
+          </button>
+        )}
       </div>
     </motion.div>
   );

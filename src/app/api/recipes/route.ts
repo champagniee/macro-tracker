@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { randomUUID } from "crypto";
-import { and, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, eq, ilike, or, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/db";
-import { recipes, recipeIngredients, foods } from "@/db/schema";
+import { recipes, users } from "@/db/schema";
 import { getSession } from "@/lib/auth/session";
 import { createRecipeSchema } from "@/lib/recipes/validation";
-import { getRecipeIngredientDetails, getRecipeIngredientDetailsBatch, sumRecipeMacros } from "@/lib/recipes/macros";
+import { getRecipeIngredientDetailsBatch, sumRecipeMacros } from "@/lib/recipes/macros";
+import { createRecipe, RecipeIngredientNotFoundError } from "@/lib/recipes/create-recipe";
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
@@ -42,10 +42,24 @@ export async function GET(request: NextRequest) {
         )
       : undefined;
 
+  // Own recipes (any visibility) plus everyone else's public ones — a recipe
+  // someone else made private never appears here at all.
+  const visibility = or(eq(recipes.userId, session.sub), eq(recipes.isPublic, true));
+
   const rows = await db
-    .select()
+    .select({
+      id: recipes.id,
+      userId: recipes.userId,
+      name: recipes.name,
+      servings: recipes.servings,
+      isPublic: recipes.isPublic,
+      createdAt: recipes.createdAt,
+      updatedAt: recipes.updatedAt,
+      ownerName: users.name,
+    })
     .from(recipes)
-    .where(nameMatches ? and(eq(recipes.userId, session.sub), nameMatches) : eq(recipes.userId, session.sub));
+    .innerJoin(users, eq(users.id, recipes.userId))
+    .where(nameMatches ? and(visibility, nameMatches) : visibility);
 
   // One query for every recipe's ingredients instead of one query per recipe —
   // Neon's HTTP driver has no connection pooling, so each query is a real
@@ -56,6 +70,7 @@ export async function GET(request: NextRequest) {
     const ingredients = ingredientsByRecipe.get(recipe.id) ?? [];
     return {
       ...recipe,
+      isOwner: recipe.userId === session.sub,
       ingredientCount: ingredients.length,
       macros: sumRecipeMacros(ingredients, recipe.servings),
     };
@@ -79,59 +94,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const { name, servings, ingredients } = parsed.data;
-
-  // An ingredient may reference any public USDA/OFF food, but a custom food can
-  // only be referenced by its own owner — otherwise one user's private recipe
-  // could smuggle another user's private custom food's nutrition into it.
-  const foodIds = [...new Set(ingredients.map((i) => i.foodId))];
-  const referencedFoods = await db
-    .select({ id: foods.id, source: foods.source, userId: foods.userId })
-    .from(foods)
-    .where(inArray(foods.id, foodIds));
-
-  if (referencedFoods.length !== foodIds.length) {
-    return NextResponse.json(
-      { error: "One or more ingredients reference a food that doesn't exist" },
-      { status: 400 },
-    );
-  }
-  const hasInaccessibleFood = referencedFoods.some(
-    (food) => food.source === "custom" && food.userId !== session.sub,
-  );
-  if (hasInaccessibleFood) {
-    return NextResponse.json(
-      { error: "One or more ingredients reference a food you don't have access to" },
-      { status: 403 },
-    );
-  }
-
-  // neon-http doesn't support real transactions, so the recipe id is generated
-  // up front and the ingredient insert is compensated with a delete on failure
-  // rather than relying on a rollback.
-  const recipeId = randomUUID();
-  await db.insert(recipes).values({ id: recipeId, userId: session.sub, name, servings });
-
   try {
-    await db.insert(recipeIngredients).values(
-      ingredients.map((ing, index) => ({
-        recipeId,
-        foodId: ing.foodId,
-        amount: ing.amount,
-        amountLabel: ing.amountLabel || null,
-        sortOrder: index,
-      })),
-    );
+    const recipe = await createRecipe(session.sub, parsed.data);
+    return NextResponse.json({ recipe }, { status: 201 });
   } catch (err) {
-    await db.delete(recipes).where(eq(recipes.id, recipeId));
+    if (err instanceof RecipeIngredientNotFoundError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
     throw err;
   }
-
-  const details = await getRecipeIngredientDetails(recipeId);
-  const macros = sumRecipeMacros(details, servings);
-
-  return NextResponse.json(
-    { recipe: { id: recipeId, userId: session.sub, name, servings, ingredients: details, macros } },
-    { status: 201 },
-  );
 }

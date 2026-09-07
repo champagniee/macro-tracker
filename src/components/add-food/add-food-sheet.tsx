@@ -2,12 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Search, X } from "lucide-react";
+import { Camera, Search, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { NumericField } from "@/components/ui/numeric-field";
 import { useFoodSearch } from "@/components/food-search/use-food-search";
-import { FOOD_SOURCE_LABEL, type FoodSearchResult } from "@/components/food-search/types";
+import { FOOD_SOURCE_LABEL, formatFoodStat, type FoodSearchResult } from "@/components/food-search/types";
+import { CategoryBadge } from "@/components/food-search/category-badge";
+import { MacroLetterBadge } from "@/components/rings/macro-letter-badge";
+import type { FoodCategory } from "@/lib/food-sources/categories";
+import type { MacroEstimate } from "@/lib/llm/estimate-macros";
 import { MEAL_ORDER } from "@/lib/mock-data";
 import { useMediaQuery } from "@/lib/use-media-query";
 import type { FoodEntry, MealType } from "@/lib/types";
@@ -21,8 +25,34 @@ interface AddFoodSheetProps {
   onSubmit: (entry: Omit<FoodEntry, "id">) => void;
 }
 
-const emptyForm = { name: "", serving: "", calories: "", protein: "", carbs: "", fat: "" };
+const emptyForm = {
+  name: "",
+  amount: "",
+  unit: "g" as "g" | "ml" | "pcs",
+  servingLabel: "",
+  category: null as FoodCategory | null,
+  calories: "",
+  protein: "",
+  carbs: "",
+  fat: "",
+};
+const UNIT_OPTIONS = ["g", "ml", "pcs"] as const;
 const RECENT_FOODS_LIMIT = 6;
+
+// One resolved food waiting to be logged — built up in the sheet before the
+// final submit, so multiple foods can be added in one visit instead of one
+// sheet-open per food. meal isn't part of this: all staged items share the
+// sheet's single meal selection, applied at final submit time.
+interface StagedFood {
+  name: string;
+  serving: string;
+  category: FoodCategory | null;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  foodId?: string;
+}
 
 // Most-recently-logged foods, deduped by name (case-insensitive), newest first.
 // Entries are always appended, so walking backwards is walking newest-to-oldest.
@@ -47,6 +77,59 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
   // through as food_id on submit. Cleared whenever the name is hand-edited,
   // since at that point the form no longer represents that catalog entry.
   const [selectedFoodId, setSelectedFoodId] = useState<string | null>(null);
+  // Per-100-base-unit macros for the selected catalog result, kept around so
+  // editing Amount can rescale live instead of only computing once at pick
+  // time. Only ever set from a real search result (recent-foods chips only
+  // carry the already-resolved macros for their original amount, not a per-100
+  // baseline to rescale from) — null means Amount edits just set the raw value.
+  const [baseline, setBaseline] = useState<{
+    caloriesPer100: number;
+    proteinPer100: number;
+    carbsPer100: number;
+    fatPer100: number;
+  } | null>(null);
+  // Whether the user has hand-typed an Amount since the last programmatic set
+  // (a search pick, or a Unit switch snapping in a default) — guards the
+  // Unit-switch default snap from clobbering a value they actually typed.
+  const [amountTouched, setAmountTouched] = useState(false);
+
+  // "Describe it" mode (estimate_macros/Gemini) — an alternative to catalog
+  // search for foods USDA/OFF won't have (home-cooked dishes, vague
+  // descriptions). Separate from search's own loading/error state since the
+  // two modes are mutually exclusive, not layered.
+  const [mode, setMode] = useState<"search" | "describe">("search");
+  const [describeText, setDescribeText] = useState("");
+  // A photo of a nutrition label/packaging — verified live this gets real
+  // printed values read directly instead of a category guess, meaningfully
+  // more reliable than text alone for an unfamiliar branded product.
+  const [image, setImage] = useState<{ data: string; mimeType: string; previewUrl: string } | null>(null);
+  const [estimating, setEstimating] = useState(false);
+  const [estimateError, setEstimateError] = useState<string | null>(null);
+  // The estimate currently backing the form, kept only to show its
+  // confidence/notes caveats — cleared the moment the form no longer
+  // represents it (name hand-edited, or a different source applied).
+  const [lastEstimate, setLastEstimate] = useState<MacroEstimate | null>(null);
+  // Foods already resolved and waiting to be logged together — lets one sheet
+  // visit add several foods instead of one sheet-open per food.
+  const [stagedFoods, setStagedFoods] = useState<StagedFood[]>([]);
+
+  // Clears everything about the food currently being entered — used both when
+  // the sheet opens and after "Add another" stages the current food, so the
+  // form is ready for the next one. Deliberately doesn't touch meal or
+  // stagedFoods; the caller resets those separately when it wants to.
+  function resetFormFields() {
+    setForm(emptyForm);
+    setQuery("");
+    setSelectedFoodId(null);
+    setBaseline(null);
+    setAmountTouched(false);
+    setMode("search");
+    setDescribeText("");
+    setImage(null);
+    setEstimating(false);
+    setEstimateError(null);
+    setLastEstimate(null);
+  }
 
   // Reset the form whenever the sheet transitions to open, without doing it
   // in an effect (avoids an extra render pass just to clear stale fields).
@@ -55,9 +138,8 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     setPrevOpen(open);
     if (open) {
       setMeal(defaultMeal);
-      setForm(emptyForm);
-      setQuery("");
-      setSelectedFoodId(null);
+      setStagedFoods([]);
+      resetFormFields();
     }
   }
 
@@ -82,52 +164,299 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
 
   const canSubmit = form.name.trim().length > 0 && Number(form.calories) > 0;
 
-  function applySuggestion(entry: FoodEntry) {
-    setForm({
+  // Recently-logged entries only ever stored a freeform "serving" display
+  // string ("150g", "1 slice", ...), not a structured amount+unit — so there's
+  // never a real number to show in Amount from the entry alone. Two cases:
+  //
+  // - Already linked to a real catalog food (entry.foodId set): fetch that
+  //   food's own servingSize/baseUnit purely so Amount/Unit show something
+  //   real instead of blank (previously left blank, which looked like a "0"
+  //   bug — it wasn't wrong, just cosmetically broken). Deliberately does NOT
+  //   touch calories/protein/carbs/fat/servingLabel — those stay exactly as
+  //   actually logged, since a recent chip is "repeat what I ate," not
+  //   "re-derive from the catalog's current numbers." No baseline is set
+  //   either, so editing Amount afterward won't silently rescale away from
+  //   the preserved recorded macros.
+  // - Not linked: no food to look up, so default to "1 pcs" — enough to pass
+  //   the hasAmount gate in handleSubmit so it can finally get saved as a
+  //   custom food on re-log, same reasoning as before this comment existed.
+  async function applySuggestion(entry: FoodEntry) {
+    const base = {
       name: entry.name,
-      serving: entry.serving,
+      servingLabel: entry.serving,
+      // FoodEntry doesn't carry a category (entries only snapshot macros, not
+      // catalog metadata) — the food lookup below fills this in when linked.
+      category: null as FoodCategory | null,
       calories: String(entry.calories),
       protein: String(entry.protein),
       carbs: String(entry.carbs),
       fat: String(entry.fat),
-    });
+    };
+
+    if (entry.foodId) {
+      try {
+        const res = await fetch(`/api/foods/${entry.foodId}`);
+        if (res.ok) {
+          const { food } = (await res.json()) as { food: FoodSearchResult };
+          setForm({ ...base, amount: String(food.servingSize ?? 100), unit: food.baseUnit, category: food.category });
+          setSelectedFoodId(entry.foodId);
+          setBaseline(null);
+          setAmountTouched(false);
+          setLastEstimate(null);
+          return;
+        }
+      } catch {
+        // Fall through to the unlinked default below.
+      }
+    }
+
+    setForm({ ...base, amount: "1", unit: "pcs" });
     setSelectedFoodId(entry.foodId ?? null);
+    setBaseline(null);
+    setAmountTouched(false);
+    setLastEstimate(null);
   }
 
   // Catalog results are stored per-100 base units — scale to the food's own
-  // serving size (falling back to 100, i.e. "per 100g/ml") for the logged amount.
+  // serving size (falling back to 100, i.e. "per 100g/ml") for the logged
+  // amount, and keep the per-100 baseline around so editing Amount afterward
+  // can rescale live instead of only computing once here.
   function applyFoodResult(food: FoodSearchResult) {
     const amount = food.servingSize ?? 100;
     const factor = amount / 100;
     setForm({
       name: food.name,
-      serving: food.servingLabel || `${amount} ${food.baseUnit}`,
+      amount: String(amount),
+      unit: food.baseUnit,
+      servingLabel: food.servingLabel ?? "",
+      category: food.category,
       calories: String(Math.round(food.caloriesPer100 * factor)),
       protein: String(Math.round(food.proteinPer100 * factor)),
       carbs: String(Math.round(food.carbsPer100 * factor)),
       fat: String(Math.round(food.fatPer100 * factor)),
     });
     setSelectedFoodId(food.id);
+    setBaseline({
+      caloriesPer100: food.caloriesPer100,
+      proteinPer100: food.proteinPer100,
+      carbsPer100: food.carbsPer100,
+      fatPer100: food.fatPer100,
+    });
+    setAmountTouched(false);
+    setLastEstimate(null);
     setQuery("");
+  }
+
+  // Gemini's estimate is already for a specific described amount (not a
+  // per-100 rate to scale from), so unlike applyFoodResult there's no
+  // baseline to keep — Amount edits afterward behave like a hand-typed food.
+  function applyEstimate(estimate: MacroEstimate) {
+    setForm({
+      name: estimate.name,
+      // A real amount+unit (not just a display string) is what lets submit
+      // save this as a reusable custom food — previously left blank here,
+      // which silently skipped that save (the gate in handleSubmit requires
+      // a valid amount), unlike recipe ingredients from the same estimate flow.
+      amount: String(estimate.servingSize),
+      unit: estimate.servingUnit,
+      servingLabel: estimate.servingDescription,
+      category: estimate.category,
+      calories: String(Math.round(estimate.calories)),
+      protein: String(Math.round(estimate.protein)),
+      carbs: String(Math.round(estimate.carbs)),
+      fat: String(Math.round(estimate.fat)),
+    });
+    setSelectedFoodId(null);
+    setBaseline(null);
+    setAmountTouched(false);
+    setLastEstimate(estimate);
+  }
+
+  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string; // "data:image/jpeg;base64,...."
+      const base64 = result.split(",")[1];
+      if (base64) setImage({ data: base64, mimeType: file.type, previewUrl: result });
+    };
+    reader.readAsDataURL(file);
+  }
+
+  const canEstimate = describeText.trim().length >= 2 || image !== null;
+
+  async function handleEstimate() {
+    if (!canEstimate || estimating) return;
+    setEstimating(true);
+    setEstimateError(null);
+    try {
+      const res = await fetch("/api/foods/estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: describeText.trim() || undefined,
+          image: image ? { data: image.data, mimeType: image.mimeType } : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Couldn't get an estimate");
+      applyEstimate(data.estimate);
+      setImage(null);
+    } catch (err) {
+      setEstimateError(err instanceof Error ? err.message : "Couldn't get an estimate");
+    } finally {
+      setEstimating(false);
+    }
   }
 
   function handleNameChange(value: string) {
     setForm((f) => ({ ...f, name: value }));
     setSelectedFoodId(null);
+    setBaseline(null);
+    setLastEstimate(null);
   }
 
-  function handleSubmit() {
-    if (!canSubmit) return;
-    onSubmit({
-      name: form.name.trim(),
-      serving: form.serving.trim() || "1 serving",
-      meal,
+  // Rescales the macro fields whenever Amount changes — from the precise
+  // catalog per-100 rate when one's known (a search pick), or otherwise
+  // proportionally from whatever's currently in the macro fields. That
+  // fallback matters: a hand-typed or "Describe it"-estimated food has no
+  // per-100 rate at all, but increasing Amount should still scale its macros
+  // — previously it silently didn't, leaving old macros next to a new amount.
+  function handleAmountChange(value: string) {
+    setAmountTouched(true);
+    setForm((f) => {
+      const newAmountNum = Number(value);
+      if (!(newAmountNum > 0)) return { ...f, amount: value };
+
+      if (baseline) {
+        const factor = newAmountNum / 100;
+        return {
+          ...f,
+          amount: value,
+          calories: String(Math.round(baseline.caloriesPer100 * factor)),
+          protein: String(Math.round(baseline.proteinPer100 * factor)),
+          carbs: String(Math.round(baseline.carbsPer100 * factor)),
+          fat: String(Math.round(baseline.fatPer100 * factor)),
+        };
+      }
+
+      // No known per-100 rate — scale proportionally from the old amount
+      // instead, so a hand-typed/estimated food's macros still track Amount.
+      const oldAmountNum = Number(f.amount);
+      if (!(oldAmountNum > 0)) return { ...f, amount: value };
+      const factor = newAmountNum / oldAmountNum;
+      return {
+        ...f,
+        amount: value,
+        calories: String(Math.round((Number(f.calories) || 0) * factor)),
+        protein: String(Math.round((Number(f.protein) || 0) * factor)),
+        carbs: String(Math.round((Number(f.carbs) || 0) * factor)),
+        fat: String(Math.round((Number(f.fat) || 0) * factor)),
+      };
+    });
+  }
+
+  // Unit only free-switches for a hand-typed food (a catalog pick's baseUnit
+  // is intrinsic to its stored per-100 data, not something to reinterpret).
+  // Snaps Amount to a sensible default for the new unit unless the user has
+  // already typed one, so switching to "pcs" doesn't leave a stale "100" sitting
+  // there implying 100 pieces.
+  function handleUnitChange(unit: "g" | "ml" | "pcs") {
+    setForm((f) => ({
+      ...f,
+      unit,
+      amount: amountTouched ? f.amount : unit === "pcs" ? "1" : "100",
+    }));
+  }
+
+  // Resolves the food currently being entered into a StagedFood — the shared
+  // step behind both "Add another" and the final submit (which also resolves
+  // whatever's left in the form, so you don't have to hit "Add another" for
+  // the very last item). Returns null if the form isn't valid to submit.
+  async function resolveCurrentForm(): Promise<StagedFood | null> {
+    if (!canSubmit) return null;
+
+    const amountNum = Number(form.amount);
+    const hasAmount = amountNum > 0;
+    const label = form.servingLabel.trim() || (hasAmount ? `${amountNum} ${form.unit}` : "1 serving");
+    const macros = {
       calories: Number(form.calories) || 0,
       protein: Number(form.protein) || 0,
       carbs: Number(form.carbs) || 0,
       fat: Number(form.fat) || 0,
-      foodId: selectedFoodId ?? undefined,
-    });
+    };
+
+    let foodId = selectedFoodId ?? undefined;
+
+    // A hand-entered food (not picked verbatim from search — selectedFoodId is
+    // cleared the moment the name is edited) gets saved as a reusable custom
+    // food too, so it's searchable and reusable next time instead of a one-off
+    // log entry — same "custom content is first-class" reasoning as the rest
+    // of the catalog. Needs a real amount+unit to convert to per-100 storage;
+    // silently skipped (falls back to a plain log entry) if that's missing,
+    // e.g. reapplying an older recent-foods chip with no structured serving.
+    if (!foodId && hasAmount) {
+      try {
+        const res = await fetch("/api/foods/custom", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: form.name.trim(),
+            servingSize: amountNum,
+            servingUnit: form.unit,
+            servingLabel: form.servingLabel.trim() || undefined,
+            category: form.category ?? undefined,
+            ...macros,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          foodId = data.food.id;
+        }
+      } catch {
+        // Non-fatal — this food still gets staged/logged even if the catalog save failed.
+      }
+    }
+
+    return {
+      name: form.name.trim(),
+      serving: label,
+      category: form.category,
+      foodId,
+      ...macros,
+    };
+  }
+
+  async function handleAddAnother() {
+    const staged = await resolveCurrentForm();
+    if (!staged) return;
+    setStagedFoods((prev) => [...prev, staged]);
+    resetFormFields();
+  }
+
+  function removeStagedFood(index: number) {
+    setStagedFoods((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function handleFinalSubmit() {
+    const current = await resolveCurrentForm();
+    const allItems = current ? [...stagedFoods, current] : stagedFoods;
+    if (allItems.length === 0) return;
+
+    for (const item of allItems) {
+      onSubmit({
+        name: item.name,
+        serving: item.serving,
+        meal,
+        calories: item.calories,
+        protein: item.protein,
+        carbs: item.carbs,
+        fat: item.fat,
+        foodId: item.foodId,
+      });
+    }
     onOpenChange(false);
   }
 
@@ -153,17 +482,127 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     >
       <SegmentedControl options={MEAL_ORDER} value={meal} onChange={setMeal} className="mb-4" />
 
-      <div className="mb-4 flex items-center gap-2 rounded-[12px] bg-ring-track px-3 py-2.5">
-        <Search size={15} className="text-muted-2 shrink-0" />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search or enter food name"
-          className="w-full bg-transparent text-[15px] outline-none placeholder:text-muted-2"
-        />
+      {stagedFoods.length > 0 && (
+        <div className="mb-4 flex flex-col gap-1.5">
+          {stagedFoods.map((item, index) => (
+            <div
+              key={index}
+              className="flex items-center gap-2 rounded-[12px] border border-separator bg-surface px-3 py-2"
+            >
+              <CategoryBadge category={item.category} size={22} />
+              <p className="min-w-0 flex-1 truncate text-[13px] font-medium">{item.name}</p>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <MacroLetterBadge letter="P" value={item.protein} color="var(--protein)" />
+                <MacroLetterBadge letter="C" value={item.carbs} color="var(--carbs)" />
+                <MacroLetterBadge letter="F" value={item.fat} color="var(--fat)" />
+              </div>
+              <span className="w-14 shrink-0 text-right text-[12px] tabular-nums text-muted">
+                {Math.round(item.calories)} kcal
+              </span>
+              <button
+                type="button"
+                onClick={() => removeStagedFood(index)}
+                aria-label={`Remove ${item.name}`}
+                className="shrink-0 text-muted-2 transition-transform active:scale-90"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mb-3 flex gap-1.5">
+        <button
+          type="button"
+          onClick={() => setMode("search")}
+          className={cn(
+            "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors",
+            mode === "search" ? "border-accent bg-accent/10 text-accent" : "border-separator bg-surface text-muted",
+          )}
+        >
+          <Search size={13} />
+          Search
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("describe")}
+          className={cn(
+            "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors",
+            mode === "describe" ? "border-accent bg-accent/10 text-accent" : "border-separator bg-surface text-muted",
+          )}
+        >
+          <Sparkles size={13} />
+          Describe it
+        </button>
       </div>
 
-      {!isSearching && recentFoods.length > 0 && (
+      {mode === "describe" && (
+        <div className="mb-5 flex flex-col gap-2">
+          <div className="flex items-start gap-2 rounded-[12px] bg-ring-track px-3 py-2.5">
+            <Sparkles size={15} className="mt-0.5 text-muted-2 shrink-0" />
+            <textarea
+              value={describeText}
+              onChange={(e) => setDescribeText(e.target.value)}
+              placeholder="e.g. 1 cup of sinigang na baboy"
+              rows={4}
+              className="w-full resize-none bg-transparent text-[15px] outline-none placeholder:text-muted-2"
+            />
+            <label className="mt-0.5 shrink-0 text-muted-2 transition-transform active:scale-90">
+              <Camera size={17} />
+              <input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
+            </label>
+          </div>
+
+          {image && (
+            <div className="flex items-center gap-2 rounded-[12px] border border-separator bg-surface px-3 py-2">
+              <img src={image.previewUrl} alt="Attached photo" className="h-10 w-10 shrink-0 rounded-[8px] object-cover" />
+              <p className="min-w-0 flex-1 truncate text-[12px] text-muted">Photo attached</p>
+              <button
+                type="button"
+                onClick={() => setImage(null)}
+                aria-label="Remove photo"
+                className="shrink-0 text-muted-2 transition-transform active:scale-90"
+              >
+                <X size={15} />
+              </button>
+            </div>
+          )}
+
+          <Button variant="secondary" className="w-full" disabled={!canEstimate || estimating} onClick={handleEstimate}>
+            {estimating ? "Estimating…" : "Get estimate"}
+          </Button>
+
+          {estimateError && (
+            <p className="px-1 text-[12px]" style={{ color: "var(--calories)" }}>
+              {estimateError}
+            </p>
+          )}
+
+          {lastEstimate && !estimateError && (
+            <div className="rounded-[12px] border border-separator bg-surface px-3 py-2.5">
+              <p className="text-[12px] font-medium capitalize">
+                {lastEstimate.confidence} confidence · {lastEstimate.servingDescription}
+              </p>
+              <p className="mt-0.5 text-[12px] text-muted">{lastEstimate.notes}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === "search" && (
+        <div className="mb-4 flex items-center gap-2 rounded-[12px] bg-ring-track px-3 py-2.5">
+          <Search size={15} className="text-muted-2 shrink-0" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search or enter food name"
+            className="w-full bg-transparent text-[15px] outline-none placeholder:text-muted-2"
+          />
+        </div>
+      )}
+
+      {mode === "search" && !isSearching && recentFoods.length > 0 && (
         <div className="mb-5 -mx-5 overflow-x-auto no-scrollbar">
           <p className="mb-2 px-5 text-[12px] font-medium text-muted">Recently logged</p>
           <div className="flex gap-2 px-5">
@@ -172,7 +611,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
                 key={entry.name}
                 onClick={() => applySuggestion(entry)}
                 className={cn(
-                  "shrink-0 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-transform active:scale-95",
+                  "max-w-40 shrink-0 truncate rounded-full border py-1.5 pl-3 pr-4 text-[13px] font-medium transition-transform active:scale-95",
                   form.name === entry.name
                     ? "border-accent bg-accent/10 text-accent"
                     : "border-separator bg-surface text-foreground",
@@ -185,7 +624,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
         </div>
       )}
 
-      {isSearching && (
+      {mode === "search" && isSearching && (
         <div className="mb-5 flex flex-col gap-2">
           {searching && <p className="px-1 text-[12px] text-muted-2">Searching…</p>}
 
@@ -210,23 +649,33 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
                       : "border-separator bg-surface",
                   )}
                 >
-                  <div className="min-w-0">
-                    <p className="truncate text-[14px] font-medium">{food.name}</p>
-                    <p className="truncate text-[12px] text-muted">
-                      {food.brand ? `${food.brand} · ` : ""}
-                      {FOOD_SOURCE_LABEL[food.source]}
-                    </p>
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <CategoryBadge category={food.category} />
+                    <div className="min-w-0">
+                      <p className="truncate text-[14px] font-medium">{food.name}</p>
+                      <p className="truncate text-[12px] text-muted">
+                        {food.brand ? `${food.brand} · ` : ""}
+                        {FOOD_SOURCE_LABEL[food.source]}
+                      </p>
+                    </div>
                   </div>
-                  <p className="shrink-0 text-[12px] tabular-nums text-muted">
-                    {Math.round(food.caloriesPer100)} kcal/100{food.baseUnit}
-                  </p>
+                  <p className="shrink-0 text-[12px] tabular-nums text-muted">{formatFoodStat(food)}</p>
                 </button>
               ))}
             </div>
           )}
 
           {!searching && searchWarnings.length === 0 && searchResults.length === 0 && (
-            <p className="px-1 text-[12px] text-muted-2">No matches found — enter it manually below.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setDescribeText(query);
+                setMode("describe");
+              }}
+              className="px-1 text-left text-[12px] font-medium text-accent"
+            >
+              Can&apos;t find it, try asking AI
+            </button>
           )}
         </div>
       )}
@@ -242,12 +691,35 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
           />
         </label>
 
+        <div className="grid grid-cols-[1fr_auto] gap-3 lg:col-span-2">
+          <NumericField
+            label="Amount"
+            value={form.amount}
+            onChange={(e) => handleAmountChange(e.target.value)}
+            onStep={(delta) => handleAmountChange(String(Math.max(0, (Number(form.amount) || 0) + delta)))}
+            placeholder="0"
+          />
+          <label className="flex flex-col gap-1">
+            <span className="text-[12px] font-medium text-muted">Unit</span>
+            {baseline ? (
+              // A catalog pick's unit is intrinsic to its stored per-100 data —
+              // shown, not editable, so it can't be reinterpreted (e.g. "100g" of
+              // chicken relabeled as "100 pcs").
+              <div className="flex h-full items-center rounded-[12px] bg-ring-track px-3 py-1.5 text-[13px] font-medium text-muted">
+                {form.unit}
+              </div>
+            ) : (
+              <SegmentedControl options={UNIT_OPTIONS} value={form.unit} onChange={handleUnitChange} />
+            )}
+          </label>
+        </div>
+
         <label className="flex flex-col gap-1 lg:col-span-2">
-          <span className="text-[12px] font-medium text-muted">Serving</span>
+          <span className="text-[12px] font-medium text-muted">Serving label (optional)</span>
           <input
-            value={form.serving}
-            onChange={(e) => setForm((f) => ({ ...f, serving: e.target.value }))}
-            placeholder="e.g. 1 cup"
+            value={form.servingLabel}
+            onChange={(e) => setForm((f) => ({ ...f, servingLabel: e.target.value }))}
+            placeholder="e.g. 1 large egg"
             className="rounded-[12px] bg-ring-track px-3 py-2.5 text-[15px] outline-none placeholder:text-muted-2 focus:ring-2 focus:ring-accent/50"
           />
         </label>
@@ -293,17 +765,30 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     </div>
   );
 
-  const footer = desktop ? (
-    <div className="border-t border-separator px-5 pt-4 pb-5">
-      <Button size="lg" className="w-full" disabled={!canSubmit} onClick={handleSubmit}>
-        Add to {meal}
+  const totalToLog = stagedFoods.length + (canSubmit ? 1 : 0);
+  const footerButtons = (
+    <div className="flex gap-2">
+      {canSubmit && (
+        <Button variant="secondary" size="lg" className="flex-1" onClick={handleAddAnother}>
+          Add another
+        </Button>
+      )}
+      <Button
+        size="lg"
+        className={canSubmit ? "flex-1" : "w-full"}
+        disabled={totalToLog === 0}
+        onClick={handleFinalSubmit}
+      >
+        {totalToLog > 1 ? `Log ${totalToLog} to ${meal}` : `Add to ${meal}`}
       </Button>
     </div>
+  );
+
+  const footer = desktop ? (
+    <div className="border-t border-separator px-5 pt-4 pb-5">{footerButtons}</div>
   ) : (
     <div className="absolute inset-x-0 bottom-0 border-t border-separator bg-surface-elevated px-5 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
-      <Button size="lg" className="w-full" disabled={!canSubmit} onClick={handleSubmit}>
-        Add to {meal}
-      </Button>
+      {footerButtons}
     </div>
   );
 
