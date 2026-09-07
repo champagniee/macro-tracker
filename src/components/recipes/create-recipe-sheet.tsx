@@ -2,13 +2,17 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { X, Trash2 } from "lucide-react";
+import { Sparkles, Search, X, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { NumericField } from "@/components/ui/numeric-field";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { FoodSearchInput, type FoodSearchResult } from "@/components/food-search/food-search-input";
+import { CategoryBadge } from "@/components/food-search/category-badge";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
+
+const VISIBILITY_OPTIONS = ["Private", "Public"] as const;
 
 interface DraftIngredient {
   food: FoodSearchResult;
@@ -41,8 +45,18 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
   const desktop = useMediaQuery("(min-width: 1024px)");
   const [name, setName] = useState("");
   const [servings, setServings] = useState("1");
+  const [visibility, setVisibility] = useState<(typeof VISIBILITY_OPTIONS)[number]>("Private");
   const [ingredients, setIngredients] = useState<DraftIngredient[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  // "Describe it" mode — decomposes a whole-dish description into real
+  // ingredients via Gemini, each saved as a custom food, then appended to the
+  // ingredient list exactly as if picked one at a time from search. Separate
+  // loading/error state from submitting since the two are independent steps.
+  const [mode, setMode] = useState<"search" | "describe">("search");
+  const [describeText, setDescribeText] = useState("");
+  const [estimating, setEstimating] = useState(false);
+  const [estimateError, setEstimateError] = useState<string | null>(null);
 
   const [prevOpen, setPrevOpen] = useState(open);
   if (open !== prevOpen) {
@@ -50,7 +64,43 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
     if (open) {
       setName("");
       setServings("1");
+      setVisibility("Private");
       setIngredients([]);
+      setMode("search");
+      setDescribeText("");
+      setEstimating(false);
+      setEstimateError(null);
+    }
+  }
+
+  async function handleEstimate() {
+    if (describeText.trim().length < 2 || estimating) return;
+    setEstimating(true);
+    setEstimateError(null);
+    try {
+      const res = await fetch("/api/recipes/estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: describeText.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Couldn't get an estimate");
+
+      setName(data.name);
+      setServings(String(data.servings));
+      setIngredients((prev) => [
+        ...prev,
+        ...data.ingredients.map((ing: { food: FoodSearchResult; amount: number; amountLabel: string }) => ({
+          food: ing.food,
+          amount: String(ing.amount),
+          amountLabel: ing.amountLabel,
+        })),
+      ]);
+      setDescribeText("");
+    } catch (err) {
+      setEstimateError(err instanceof Error ? err.message : "Couldn't get an estimate");
+    } finally {
+      setEstimating(false);
     }
   }
 
@@ -91,6 +141,7 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
         body: JSON.stringify({
           name: name.trim(),
           servings: servingsNum,
+          isPublic: visibility === "Public",
           ingredients: ingredients.map((ing) => ({
             foodId: ing.food.id,
             amount: Number(ing.amount),
@@ -141,19 +192,89 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
           />
         </label>
 
-        <div className="w-32">
-          <NumericField
-            label="Servings"
-            value={servings}
-            onChange={(e) => setServings(e.target.value)}
-            min={1}
-          />
+        <div className="flex items-end gap-3">
+          <div className="w-32">
+            <NumericField
+              label="Servings"
+              value={servings}
+              onChange={(e) => setServings(e.target.value)}
+              onStep={(delta) => setServings(String(Math.max(1, (Number(servings) || 1) + delta)))}
+              min={1}
+            />
+          </div>
+          <div className="flex-1">
+            <span className="mb-1 block text-[12px] font-medium text-muted">Visibility</span>
+            <SegmentedControl options={VISIBILITY_OPTIONS} value={visibility} onChange={setVisibility} />
+          </div>
         </div>
       </div>
 
       <div className="mt-5 flex flex-col gap-2">
-        <span className="text-[12px] font-medium text-muted">Add ingredients</span>
-        <FoodSearchInput onSelect={handleAddIngredient} placeholder="Search foods to add" />
+        <div className="flex items-center justify-between">
+          <span className="text-[12px] font-medium text-muted">Add ingredients</span>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => setMode("search")}
+              className={cn(
+                "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors",
+                mode === "search" ? "border-accent bg-accent/10 text-accent" : "border-separator bg-surface text-muted",
+              )}
+            >
+              <Search size={12} />
+              Search
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("describe")}
+              className={cn(
+                "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors",
+                mode === "describe" ? "border-accent bg-accent/10 text-accent" : "border-separator bg-surface text-muted",
+              )}
+            >
+              <Sparkles size={12} />
+              Describe it
+            </button>
+          </div>
+        </div>
+
+        {mode === "search" && (
+          <FoodSearchInput
+            onSelect={handleAddIngredient}
+            placeholder="Search foods to add"
+            onAskAi={(query) => {
+              setMode("describe");
+              setDescribeText(query);
+            }}
+          />
+        )}
+
+        {mode === "describe" && (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-start gap-2 rounded-[12px] bg-ring-track px-3 py-2.5">
+              <Sparkles size={15} className="mt-0.5 text-muted-2 shrink-0" />
+              <textarea
+                value={describeText}
+                onChange={(e) => setDescribeText(e.target.value)}
+                placeholder="e.g. peanut butter sandwich with 2 slices of bread"
+                rows={4}
+                className="w-full resize-none bg-transparent text-[15px] outline-none placeholder:text-muted-2"
+              />
+            </div>
+            <Button
+              variant="secondary"
+              disabled={describeText.trim().length < 2 || estimating}
+              onClick={handleEstimate}
+            >
+              {estimating ? "Estimating…" : "Get estimate"}
+            </Button>
+            {estimateError && (
+              <p className="px-1 text-[12px]" style={{ color: "var(--calories)" }}>
+                {estimateError}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {ingredients.length > 0 && (
@@ -161,7 +282,10 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
           {ingredients.map((ing, index) => (
             <div key={`${ing.food.id}-${index}`} className="rounded-[12px] border border-separator bg-surface p-3">
               <div className="flex items-start justify-between gap-2">
-                <p className="min-w-0 truncate text-[14px] font-medium">{ing.food.name}</p>
+                <div className="flex min-w-0 items-center gap-2">
+                  <CategoryBadge category={ing.food.category} size={22} />
+                  <p className="min-w-0 truncate text-[14px] font-medium">{ing.food.name}</p>
+                </div>
                 <button
                   type="button"
                   onClick={() => removeIngredient(index)}
@@ -172,17 +296,14 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
                 </button>
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2">
-                <label className="flex flex-col gap-1">
-                  <span className="text-[11px] text-muted-2">Amount ({ing.food.baseUnit})</span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    min={0}
-                    value={ing.amount}
-                    onChange={(e) => updateIngredient(index, { amount: e.target.value })}
-                    className="rounded-[10px] bg-ring-track px-2.5 py-2 text-[14px] tabular-nums outline-none focus:ring-2 focus:ring-accent/50"
-                  />
-                </label>
+                <NumericField
+                  label={`Amount (${ing.food.baseUnit})`}
+                  value={ing.amount}
+                  onChange={(e) => updateIngredient(index, { amount: e.target.value })}
+                  onStep={(delta) =>
+                    updateIngredient(index, { amount: String(Math.max(0, (Number(ing.amount) || 0) + delta)) })
+                  }
+                />
                 <label className="flex flex-col gap-1">
                   <span className="text-[11px] text-muted-2">Label (optional)</span>
                   <input

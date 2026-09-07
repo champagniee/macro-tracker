@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "macro-tracker": {
+      "command": "npm",
+      "args": ["run", "mcp"]
+    }
+  }
+}

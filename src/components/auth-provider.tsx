@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 interface AuthUser {
   id: string;
   email: string;
+  name: string;
 }
 
 interface AuthContextValue {

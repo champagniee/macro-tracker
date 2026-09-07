@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
+import { GoogleButton } from "@/components/auth/google-button";
 import { useAuth } from "@/components/auth-provider";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, loading, refresh } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,6 +23,14 @@ export default function LoginPage() {
       router.replace("/");
     }
   }, [loading, user, router]);
+
+  useEffect(() => {
+    const error = searchParams.get("error");
+    if (error) {
+      toast.error(error);
+      router.replace("/login");
+    }
+  }, [searchParams, router]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -84,6 +94,14 @@ export default function LoginPage() {
         </Button>
       </form>
 
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1 bg-separator" />
+        <span className="text-[12px] text-muted-2">or</span>
+        <div className="h-px flex-1 bg-separator" />
+      </div>
+
+      <GoogleButton label="Continue with Google" />
+
       <p className="text-center text-[13px] text-muted">
         Don&apos;t have an account?{" "}
         <Link href="/register" className="font-medium text-accent">
@@ -91,5 +109,13 @@ export default function LoginPage() {
         </Link>
       </p>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

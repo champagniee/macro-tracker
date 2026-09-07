@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { db } from "@/db";
-import { foods } from "@/db/schema";
 import { getSession } from "@/lib/auth/session";
 import { customFoodSchema } from "@/lib/food-sources/validation";
+import { createCustomFood } from "@/lib/food-sources/create-custom-food";
 
 export async function POST(request: Request) {
   const session = await getSession();
@@ -19,27 +18,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const { name, brand, servingSize, servingUnit, servingLabel, calories, protein, carbs, fat } = parsed.data;
-  const factor = 100 / servingSize;
-
-  const [food] = await db
-    .insert(foods)
-    .values({
-      source: "custom",
-      externalId: null,
-      name,
-      brand: brand || null,
-      baseUnit: servingUnit,
-      caloriesPer100: calories * factor,
-      proteinPer100: protein * factor,
-      carbsPer100: carbs * factor,
-      fatPer100: fat * factor,
-      servingSize,
-      servingUnit,
-      servingLabel: servingLabel || null,
-      userId: session.sub,
-    })
-    .returning();
-
+  const food = await createCustomFood(session.sub, parsed.data);
   return NextResponse.json({ food }, { status: 201 });
 }

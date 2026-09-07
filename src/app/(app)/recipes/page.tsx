@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Globe2, Plus } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CreateRecipeSheet } from "@/components/recipes/create-recipe-sheet";
 import { formatNumber } from "@/lib/utils";
@@ -11,6 +11,9 @@ interface RecipeSummary {
   id: string;
   name: string;
   servings: number;
+  isPublic: boolean;
+  isOwner: boolean;
+  ownerName: string;
   ingredientCount: number;
   macros: {
     perServingCalories: number;
@@ -60,10 +63,16 @@ export default function RecipesPage() {
               href={`/recipes/${recipe.id}`}
               className="flex flex-col gap-1 rounded-[var(--radius-card)] bg-surface p-4 shadow-[var(--shadow-card)] transition-transform active:scale-[0.98]"
             >
-              <p className="text-[15px] font-medium">{recipe.name}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="min-w-0 truncate text-[15px] font-medium">{recipe.name}</p>
+                {recipe.isPublic && (
+                  <Globe2 size={12} className="shrink-0 text-muted-2" aria-label="Public recipe" />
+                )}
+              </div>
               <p className="text-[12px] text-muted">
                 {recipe.ingredientCount} ingredient{recipe.ingredientCount === 1 ? "" : "s"} ·{" "}
                 {recipe.servings} serving{recipe.servings === 1 ? "" : "s"}
+                {!recipe.isOwner && ` · by ${recipe.ownerName}`}
               </p>
               <p className="mt-1 text-[13px] tabular-nums text-muted">
                 {formatNumber(recipe.macros.perServingCalories)} kcal · P

@@ -12,6 +12,7 @@
 
   --accent: #007aff;
   --calories: #ff375f;
+  --calories-over: #d70015;
   --protein: #0a84ff;
   --carbs: #ff9f0a;
   --fat: #bf5af2;
@@ -46,6 +47,7 @@
 
   --color-accent: var(--accent);
   --color-calories: var(--calories);
+  --color-calories-over: var(--calories-over);
   --color-protein: var(--protein);
   --color-carbs: var(--carbs);
   --color-fat: var(--fat);

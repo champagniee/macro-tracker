@@ -23,6 +23,20 @@ export function CalorieRing({
   const remaining = Math.max(goal - consumed, 0);
   const over = consumed > goal;
 
+  // Once over goal, the main ring reads as "full" (its 0-100% story is
+  // done) and a smaller inset ring takes over, tracking the excess as its
+  // own lap of the goal amount — so going 2x over goal shows a full inner
+  // ring too, not an inner ring stuck at 100% forever.
+  const excess = Math.max(consumed - goal, 0);
+  const overflowStrokeWidth = strokeWidth * 0.6;
+  const overflowRadius = radius - strokeWidth / 2 - overflowStrokeWidth / 2 - 4;
+  const overflowCircumference = 2 * Math.PI * overflowRadius;
+  const overflowProgress = over && goal > 0 ? Math.min(excess / goal, 1) : 0;
+
+  const transition = reduceMotion
+    ? { duration: 0.2 }
+    : { type: "spring" as const, duration: 1.1, bounce: 0.15 };
+
   return (
     <div className="relative" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90">
@@ -39,21 +53,46 @@ export function CalorieRing({
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke={over ? "var(--calories)" : "var(--calories)"}
+          stroke="var(--calories)"
           strokeWidth={strokeWidth}
           strokeLinecap="round"
           strokeDasharray={circumference}
           initial={{ strokeDashoffset: circumference }}
           animate={{ strokeDashoffset: circumference * (1 - progress) }}
-          transition={
-            reduceMotion
-              ? { duration: 0.2 }
-              : { type: "spring", duration: 1.1, bounce: 0.15 }
-          }
+          transition={transition}
         />
+
+        {over && (
+          <>
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={overflowRadius}
+              fill="none"
+              stroke="var(--ring-track)"
+              strokeWidth={overflowStrokeWidth}
+            />
+            <motion.circle
+              cx={size / 2}
+              cy={size / 2}
+              r={overflowRadius}
+              fill="none"
+              stroke="var(--calories-over)"
+              strokeWidth={overflowStrokeWidth}
+              strokeLinecap="round"
+              strokeDasharray={overflowCircumference}
+              initial={{ strokeDashoffset: overflowCircumference }}
+              animate={{ strokeDashoffset: overflowCircumference * (1 - overflowProgress) }}
+              transition={transition}
+            />
+          </>
+        )}
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-[13px] font-medium text-muted">
+        <span
+          className="text-[13px] font-medium text-muted"
+          style={over ? { color: "var(--calories-over)" } : undefined}
+        >
           {over ? "Over" : "Remaining"}
         </span>
         <span className="text-[40px] font-semibold tracking-tight tabular-nums">

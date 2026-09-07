@@ -1,5 +1,5 @@
 export type FoodSource = "usda" | "openfoodfacts" | "custom";
-export type FoodBaseUnit = "g" | "ml";
+export type FoodBaseUnit = "g" | "ml" | "pcs";
 
 // The shape every source (USDA, Open Food Facts, custom) normalizes into
 // before it's cached in / read from the `foods` table.
