@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Sparkles, Search, X, Trash2 } from "lucide-react";
+import { Sparkles, Search, X, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { NumericField } from "@/components/ui/numeric-field";
@@ -13,6 +13,13 @@ import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
 
 const VISIBILITY_OPTIONS = ["Private", "Public"] as const;
+// Slides in from the tapped tab's side and out toward the other, rather than
+// a plain crossfade — direction comes in via Motion's `custom` prop.
+const modeSlideVariants = {
+  enter: (direction: number) => ({ opacity: 0, x: direction > 0 ? 16 : -16 }),
+  center: { opacity: 1, x: 0 },
+  exit: (direction: number) => ({ opacity: 0, x: direction > 0 ? -16 : 16 }),
+};
 
 interface DraftIngredient {
   food: FoodSearchResult;
@@ -54,6 +61,13 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
   // ingredient list exactly as if picked one at a time from search. Separate
   // loading/error state from submitting since the two are independent steps.
   const [mode, setMode] = useState<"search" | "describe">("search");
+  // +1/-1 — Search sits left of Describe it, so the content slides the same
+  // direction as the tab that was tapped instead of just crossfading in place.
+  const [modeDirection, setModeDirection] = useState(0);
+  function changeMode(next: typeof mode) {
+    setModeDirection(next === "describe" ? 1 : -1);
+    setMode(next);
+  }
   const [describeText, setDescribeText] = useState("");
   const [estimating, setEstimating] = useState(false);
   const [estimateError, setEstimateError] = useState<string | null>(null);
@@ -215,7 +229,7 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
           <div className="flex gap-1.5">
             <button
               type="button"
-              onClick={() => setMode("search")}
+              onClick={() => changeMode("search")}
               className={cn(
                 "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors",
                 mode === "search" ? "border-accent bg-accent/10 text-accent" : "border-separator bg-surface text-muted",
@@ -226,7 +240,7 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
             </button>
             <button
               type="button"
-              onClick={() => setMode("describe")}
+              onClick={() => changeMode("describe")}
               className={cn(
                 "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors",
                 mode === "describe" ? "border-accent bg-accent/10 text-accent" : "border-separator bg-surface text-muted",
@@ -238,43 +252,70 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
           </div>
         </div>
 
-        {mode === "search" && (
-          <FoodSearchInput
-            onSelect={handleAddIngredient}
-            placeholder="Search foods to add"
-            onAskAi={(query) => {
-              setMode("describe");
-              setDescribeText(query);
-            }}
-          />
-        )}
-
-        {mode === "describe" && (
-          <div className="flex flex-col gap-2">
-            <div className="flex items-start gap-2 rounded-[12px] bg-ring-track px-3 py-2.5">
-              <Sparkles size={15} className="mt-0.5 text-muted-2 shrink-0" />
-              <textarea
-                value={describeText}
-                onChange={(e) => setDescribeText(e.target.value)}
-                placeholder="e.g. peanut butter sandwich with 2 slices of bread"
-                rows={4}
-                className="w-full resize-none bg-transparent text-[15px] outline-none placeholder:text-muted-2"
-              />
-            </div>
-            <Button
-              variant="secondary"
-              disabled={describeText.trim().length < 2 || estimating}
-              onClick={handleEstimate}
-            >
-              {estimating ? "Estimating…" : "Get estimate"}
-            </Button>
-            {estimateError && (
-              <p className="px-1 text-[12px]" style={{ color: "var(--calories)" }}>
-                {estimateError}
-              </p>
+        <motion.div layout transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}>
+          <AnimatePresence mode="popLayout" initial={false} custom={modeDirection}>
+            {mode === "search" && (
+              <motion.div
+                key="search"
+                layout
+                custom={modeDirection}
+                variants={modeSlideVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.15, ease: [0.23, 1, 0.32, 1] }}
+              >
+                <FoodSearchInput
+                  onSelect={handleAddIngredient}
+                  placeholder="Search foods to add"
+                  onAskAi={(query) => {
+                    changeMode("describe");
+                    setDescribeText(query);
+                  }}
+                />
+              </motion.div>
             )}
-          </div>
-        )}
+
+            {mode === "describe" && (
+              <motion.div
+                key="describe"
+                layout
+                custom={modeDirection}
+                variants={modeSlideVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.15, ease: [0.23, 1, 0.32, 1] }}
+              >
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-start gap-2 rounded-[12px] bg-ring-track px-3 py-2.5">
+                    <Sparkles size={15} className="mt-0.5 text-muted-2 shrink-0" />
+                    <textarea
+                      value={describeText}
+                      onChange={(e) => setDescribeText(e.target.value)}
+                      placeholder="e.g. peanut butter sandwich with 2 slices of bread"
+                      rows={4}
+                      className="w-full resize-none bg-transparent text-[15px] outline-none placeholder:text-muted-2"
+                    />
+                  </div>
+                  <Button
+                    variant="secondary"
+                    disabled={describeText.trim().length < 2 || estimating}
+                    onClick={handleEstimate}
+                  >
+                    {estimating && <Loader2 size={14} className="animate-spin" />}
+                    {estimating ? "Asking AI…" : "Ask AI"}
+                  </Button>
+                  {estimateError && (
+                    <p className="px-1 text-[12px]" style={{ color: "var(--calories)" }}>
+                      {estimateError}
+                    </p>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
       </div>
 
       {ingredients.length > 0 && (

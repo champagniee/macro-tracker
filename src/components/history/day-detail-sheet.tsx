@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { X, Beef, Wheat, Droplet } from "lucide-react";
 import { MealSection } from "@/components/meals/meal-section";
+import { FoodEntryDetailSheet } from "@/components/meals/food-entry-detail-sheet";
 import { CalorieRing } from "@/components/rings/calorie-ring";
 import { MacroBar } from "@/components/rings/macro-bar";
 import { useGoals } from "@/components/goals-provider";
@@ -44,6 +45,7 @@ export function DayDetailSheet({ date, onOpenChange }: DayDetailSheetProps) {
   const open = date !== null;
   const [entries, setEntries] = useState<FoodEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [selectedEntry, setSelectedEntry] = useState<FoodEntry | null>(null);
 
   useEffect(() => {
     if (!date) return;
@@ -130,7 +132,12 @@ export function DayDetailSheet({ date, onOpenChange }: DayDetailSheetProps) {
           ) : (
             <div className="flex flex-col gap-3">
               {MEAL_ORDER.map((meal) => (
-                <MealSection key={meal} meal={meal} entries={entries.filter((e) => e.meal === meal)} />
+                <MealSection
+                  key={meal}
+                  meal={meal}
+                  entries={entries.filter((e) => e.meal === meal)}
+                  onSelect={setSelectedEntry}
+                />
               ))}
             </div>
           )}
@@ -140,6 +147,7 @@ export function DayDetailSheet({ date, onOpenChange }: DayDetailSheetProps) {
   );
 
   return (
+    <>
     <AnimatePresence>
       {open && (
         <>
@@ -197,5 +205,11 @@ export function DayDetailSheet({ date, onOpenChange }: DayDetailSheetProps) {
         </>
       )}
     </AnimatePresence>
+
+    <FoodEntryDetailSheet
+      entry={selectedEntry}
+      onOpenChange={(entryOpen) => !entryOpen && setSelectedEntry(null)}
+    />
+    </>
   );
 }

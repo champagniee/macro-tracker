@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Camera, Search, Sparkles, X } from "lucide-react";
+import { Camera, ChefHat, Globe2, Loader2, Search, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { NumericField } from "@/components/ui/numeric-field";
 import { useFoodSearch } from "@/components/food-search/use-food-search";
+import { useRecipeSearch, type RecipeSearchResult } from "@/components/food-search/use-recipe-search";
 import { FOOD_SOURCE_LABEL, formatFoodStat, type FoodSearchResult } from "@/components/food-search/types";
 import { CategoryBadge } from "@/components/food-search/category-badge";
 import { MacroLetterBadge } from "@/components/rings/macro-letter-badge";
@@ -38,6 +39,17 @@ const emptyForm = {
 };
 const UNIT_OPTIONS = ["g", "ml", "pcs"] as const;
 const RECENT_FOODS_LIMIT = 6;
+// Left-to-right, matching the mode tabs' actual on-screen order — the index
+// difference between old and new mode is what tells the content which way
+// to slide.
+const MODE_ORDER = ["search", "describe", "recipe"] as const;
+// Slides in from the tapped tab's side and out toward the other, rather than
+// a plain crossfade — direction comes in via Motion's `custom` prop.
+const modeSlideVariants = {
+  enter: (direction: number) => ({ opacity: 0, x: direction > 0 ? 16 : -16 }),
+  center: { opacity: 1, x: 0 },
+  exit: (direction: number) => ({ opacity: 0, x: direction > 0 ? -16 : 16 }),
+};
 
 // One resolved food waiting to be logged — built up in the sheet before the
 // final submit, so multiple foods can be added in one visit instead of one
@@ -92,12 +104,27 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
   // (a search pick, or a Unit switch snapping in a default) — guards the
   // Unit-switch default snap from clobbering a value they actually typed.
   const [amountTouched, setAmountTouched] = useState(false);
+  // Set when the form is currently backed by a picked recipe (1 serving's
+  // macros) rather than a catalog food — gates two things: resolveCurrentForm
+  // must NOT save it as a new custom food (a recipe log isn't a catalog
+  // entry), and the Unit field stays locked the same way a catalog baseline
+  // locks it, since "g of 1 recipe serving" doesn't mean anything.
+  const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null);
 
   // "Describe it" mode (estimate_macros/Gemini) — an alternative to catalog
   // search for foods USDA/OFF won't have (home-cooked dishes, vague
-  // descriptions). Separate from search's own loading/error state since the
-  // two modes are mutually exclusive, not layered.
-  const [mode, setMode] = useState<"search" | "describe">("search");
+  // descriptions). "Recipe" mode logs 1 serving of one of your own or a
+  // public recipe, reusing the same resolved-macros form the other two modes
+  // populate. Mutually exclusive, not layered.
+  const [mode, setMode] = useState<"search" | "describe" | "recipe">("search");
+  // +1/-1, set right before mode changes — tells the mode content which way
+  // to slide (matches the left-to-right order the mode tabs are laid out in,
+  // so the content visibly moves the same direction as the tab you tapped).
+  const [modeDirection, setModeDirection] = useState(0);
+  function changeMode(next: typeof mode) {
+    setModeDirection(MODE_ORDER.indexOf(next) > MODE_ORDER.indexOf(mode) ? 1 : -1);
+    setMode(next);
+  }
   const [describeText, setDescribeText] = useState("");
   // A photo of a nutrition label/packaging — verified live this gets real
   // printed values read directly instead of a category guess, meaningfully
@@ -122,6 +149,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     setQuery("");
     setSelectedFoodId(null);
     setBaseline(null);
+    setSelectedRecipeId(null);
     setAmountTouched(false);
     setMode("search");
     setDescribeText("");
@@ -160,6 +188,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
   // Facts/custom foods) replaces the recent-foods chips — recent chips are the
   // zero-effort "log what I always eat" path, search is for finding anything else.
   const { results: searchResults, warnings: searchWarnings, loading: searching } = useFoodSearch(query);
+  const { results: recipeResults, loading: searchingRecipes } = useRecipeSearch(query);
   const isSearching = query.trim().length >= 2;
 
   const canSubmit = form.name.trim().length > 0 && Number(form.calories) > 0;
@@ -201,6 +230,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
           setForm({ ...base, amount: String(food.servingSize ?? 100), unit: food.baseUnit, category: food.category });
           setSelectedFoodId(entry.foodId);
           setBaseline(null);
+          setSelectedRecipeId(null);
           setAmountTouched(false);
           setLastEstimate(null);
           return;
@@ -213,6 +243,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     setForm({ ...base, amount: "1", unit: "pcs" });
     setSelectedFoodId(entry.foodId ?? null);
     setBaseline(null);
+    setSelectedRecipeId(null);
     setAmountTouched(false);
     setLastEstimate(null);
   }
@@ -242,6 +273,36 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
       carbsPer100: food.carbsPer100,
       fatPer100: food.fatPer100,
     });
+    setSelectedRecipeId(null);
+    setAmountTouched(false);
+    setLastEstimate(null);
+    setQuery("");
+  }
+
+  // A recipe's per-serving macros become the form's numbers for "1" serving,
+  // same shape as a resolved food — but with no per-100 baseline (there isn't
+  // one), Amount edits fall through to the proportional-scaling path in
+  // handleAmountChange, which correctly means "N servings" for any N typed.
+  // selectedRecipeId is what stops resolveCurrentForm from saving this as a
+  // brand-new custom food on submit.
+  function applyRecipeResult(recipe: RecipeSearchResult) {
+    setForm({
+      name: recipe.name,
+      amount: "1",
+      unit: "pcs",
+      // Left blank deliberately — resolveCurrentForm derives "N servings"
+      // from the current Amount at resolve time instead, so it can't go
+      // stale if Amount changes after picking.
+      servingLabel: "",
+      category: "meal",
+      calories: String(Math.round(recipe.macros.perServingCalories)),
+      protein: String(Math.round(recipe.macros.perServingProtein)),
+      carbs: String(Math.round(recipe.macros.perServingCarbs)),
+      fat: String(Math.round(recipe.macros.perServingFat)),
+    });
+    setSelectedFoodId(null);
+    setBaseline(null);
+    setSelectedRecipeId(recipe.id);
     setAmountTouched(false);
     setLastEstimate(null);
     setQuery("");
@@ -268,6 +329,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     });
     setSelectedFoodId(null);
     setBaseline(null);
+    setSelectedRecipeId(null);
     setAmountTouched(false);
     setLastEstimate(estimate);
   }
@@ -315,6 +377,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     setForm((f) => ({ ...f, name: value }));
     setSelectedFoodId(null);
     setBaseline(null);
+    setSelectedRecipeId(null);
     setLastEstimate(null);
   }
 
@@ -380,7 +443,16 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
 
     const amountNum = Number(form.amount);
     const hasAmount = amountNum > 0;
-    const label = form.servingLabel.trim() || (hasAmount ? `${amountNum} ${form.unit}` : "1 serving");
+    // Computed fresh here (not prefilled once at pick time) so it stays
+    // correct if Amount changes afterward — "2 servings" instead of a stale
+    // "1 serving" left over from when the recipe was first picked.
+    const label =
+      form.servingLabel.trim() ||
+      (selectedRecipeId
+        ? `${amountNum} serving${amountNum === 1 ? "" : "s"}`
+        : hasAmount
+          ? `${amountNum} ${form.unit}`
+          : "1 serving");
     const macros = {
       calories: Number(form.calories) || 0,
       protein: Number(form.protein) || 0,
@@ -397,7 +469,10 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     // of the catalog. Needs a real amount+unit to convert to per-100 storage;
     // silently skipped (falls back to a plain log entry) if that's missing,
     // e.g. reapplying an older recent-foods chip with no structured serving.
-    if (!foodId && hasAmount) {
+    // Skipped entirely for a recipe pick — logging "1 serving of a recipe"
+    // isn't a new catalog food, it's just an entry snapshotting that recipe's
+    // per-serving macros.
+    if (!foodId && hasAmount && !selectedRecipeId) {
       try {
         const res = await fetch("/api/foods/custom", {
           method: "POST",
@@ -515,9 +590,9 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
       <div className="mb-3 flex gap-1.5">
         <button
           type="button"
-          onClick={() => setMode("search")}
+          onClick={() => changeMode("search")}
           className={cn(
-            "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors",
+            "flex flex-1 items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors",
             mode === "search" ? "border-accent bg-accent/10 text-accent" : "border-separator bg-surface text-muted",
           )}
         >
@@ -526,159 +601,275 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
         </button>
         <button
           type="button"
-          onClick={() => setMode("describe")}
+          onClick={() => changeMode("describe")}
           className={cn(
-            "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors",
+            "flex flex-1 items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors",
             mode === "describe" ? "border-accent bg-accent/10 text-accent" : "border-separator bg-surface text-muted",
           )}
         >
           <Sparkles size={13} />
           Describe it
         </button>
+        <button
+          type="button"
+          onClick={() => changeMode("recipe")}
+          className={cn(
+            "flex flex-1 items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors",
+            mode === "recipe" ? "border-accent bg-accent/10 text-accent" : "border-separator bg-surface text-muted",
+          )}
+        >
+          <ChefHat size={13} />
+          Recipes
+        </button>
       </div>
 
-      {mode === "describe" && (
-        <div className="mb-5 flex flex-col gap-2">
-          <div className="flex items-start gap-2 rounded-[12px] bg-ring-track px-3 py-2.5">
-            <Sparkles size={15} className="mt-0.5 text-muted-2 shrink-0" />
-            <textarea
-              value={describeText}
-              onChange={(e) => setDescribeText(e.target.value)}
-              placeholder="e.g. 1 cup of sinigang na baboy"
-              rows={4}
-              className="w-full resize-none bg-transparent text-[15px] outline-none placeholder:text-muted-2"
-            />
-            <label className="mt-0.5 shrink-0 text-muted-2 transition-transform active:scale-90">
-              <Camera size={17} />
-              <input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
-            </label>
-          </div>
-
-          {image && (
-            <div className="flex items-center gap-2 rounded-[12px] border border-separator bg-surface px-3 py-2">
-              <img src={image.previewUrl} alt="Attached photo" className="h-10 w-10 shrink-0 rounded-[8px] object-cover" />
-              <p className="min-w-0 flex-1 truncate text-[12px] text-muted">Photo attached</p>
-              <button
-                type="button"
-                onClick={() => setImage(null)}
-                aria-label="Remove photo"
-                className="shrink-0 text-muted-2 transition-transform active:scale-90"
-              >
-                <X size={15} />
-              </button>
-            </div>
-          )}
-
-          <Button variant="secondary" className="w-full" disabled={!canEstimate || estimating} onClick={handleEstimate}>
-            {estimating ? "Estimating…" : "Get estimate"}
-          </Button>
-
-          {estimateError && (
-            <p className="px-1 text-[12px]" style={{ color: "var(--calories)" }}>
-              {estimateError}
-            </p>
-          )}
-
-          {lastEstimate && !estimateError && (
-            <div className="rounded-[12px] border border-separator bg-surface px-3 py-2.5">
-              <p className="text-[12px] font-medium capitalize">
-                {lastEstimate.confidence} confidence · {lastEstimate.servingDescription}
-              </p>
-              <p className="mt-0.5 text-[12px] text-muted">{lastEstimate.notes}</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {mode === "search" && (
-        <div className="mb-4 flex items-center gap-2 rounded-[12px] bg-ring-track px-3 py-2.5">
-          <Search size={15} className="text-muted-2 shrink-0" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search or enter food name"
-            className="w-full bg-transparent text-[15px] outline-none placeholder:text-muted-2"
-          />
-        </div>
-      )}
-
-      {mode === "search" && !isSearching && recentFoods.length > 0 && (
-        <div className="mb-5 -mx-5 overflow-x-auto no-scrollbar">
-          <p className="mb-2 px-5 text-[12px] font-medium text-muted">Recently logged</p>
-          <div className="flex gap-2 px-5">
-            {recentFoods.map((entry) => (
-              <button
-                key={entry.name}
-                onClick={() => applySuggestion(entry)}
-                className={cn(
-                  "max-w-40 shrink-0 truncate rounded-full border py-1.5 pl-3 pr-4 text-[13px] font-medium transition-transform active:scale-95",
-                  form.name === entry.name
-                    ? "border-accent bg-accent/10 text-accent"
-                    : "border-separator bg-surface text-foreground",
-                )}
-              >
-                {entry.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {mode === "search" && isSearching && (
-        <div className="mb-5 flex flex-col gap-2">
-          {searching && <p className="px-1 text-[12px] text-muted-2">Searching…</p>}
-
-          {!searching && searchWarnings.length > 0 && (
-            <p className="px-1 text-[12px]" style={{ color: "var(--calories)" }}>
-              {searchWarnings.join(" · ")}
-              {searchResults.length > 0 ? " — results may be incomplete." : " Try again in a moment."}
-            </p>
-          )}
-
-          {!searching && searchResults.length > 0 && (
-            <div className="no-scrollbar flex max-h-56 flex-col gap-1.5 overflow-y-auto">
-              {searchResults.map((food) => (
-                <button
-                  key={food.id}
-                  type="button"
-                  onClick={() => applyFoodResult(food)}
-                  className={cn(
-                    "flex items-center justify-between gap-3 rounded-[12px] border px-3 py-2.5 text-left transition-transform active:scale-[0.98]",
-                    selectedFoodId === food.id
-                      ? "border-accent bg-accent/10"
-                      : "border-separator bg-surface",
-                  )}
-                >
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <CategoryBadge category={food.category} />
-                    <div className="min-w-0">
-                      <p className="truncate text-[14px] font-medium">{food.name}</p>
-                      <p className="truncate text-[12px] text-muted">
-                        {food.brand ? `${food.brand} · ` : ""}
-                        {FOOD_SOURCE_LABEL[food.source]}
-                      </p>
-                    </div>
-                  </div>
-                  <p className="shrink-0 text-[12px] tabular-nums text-muted">{formatFoodStat(food)}</p>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {!searching && searchWarnings.length === 0 && searchResults.length === 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                setDescribeText(query);
-                setMode("describe");
-              }}
-              className="px-1 text-left text-[12px] font-medium text-accent"
+      {/* `layout` lets this box smoothly resize as the mode switches between
+          very differently-sized content (a textarea vs. a results list)
+          instead of snapping straight to the new height. `popLayout` takes
+          the exiting mode out of flow immediately so the incoming one's
+          layout animation isn't blocked waiting for it to finish fading. */}
+      <motion.div layout transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}>
+        <AnimatePresence mode="popLayout" initial={false} custom={modeDirection}>
+          {mode === "describe" && (
+            <motion.div
+              key="describe"
+              layout
+              custom={modeDirection}
+              variants={modeSlideVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.15, ease: [0.23, 1, 0.32, 1] }}
             >
-              Can&apos;t find it, try asking AI
-            </button>
+              <div className="mb-5 flex flex-col gap-2">
+                <div className="flex items-start gap-2 rounded-[12px] bg-ring-track px-3 py-2.5">
+                  <Sparkles size={15} className="mt-0.5 text-muted-2 shrink-0" />
+                  <textarea
+                    value={describeText}
+                    onChange={(e) => setDescribeText(e.target.value)}
+                    placeholder="e.g. 1 cup of sinigang na baboy"
+                    rows={4}
+                    className="w-full resize-none bg-transparent text-[15px] outline-none placeholder:text-muted-2"
+                  />
+                  <label className="mt-0.5 shrink-0 text-muted-2 transition-transform active:scale-90">
+                    <Camera size={17} />
+                    <input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
+                  </label>
+                </div>
+
+                {image && (
+                  <div className="flex items-center gap-2 rounded-[12px] border border-separator bg-surface px-3 py-2">
+                    <img src={image.previewUrl} alt="Attached photo" className="h-10 w-10 shrink-0 rounded-[8px] object-cover" />
+                    <p className="min-w-0 flex-1 truncate text-[12px] text-muted">Photo attached</p>
+                    <button
+                      type="button"
+                      onClick={() => setImage(null)}
+                      aria-label="Remove photo"
+                      className="shrink-0 text-muted-2 transition-transform active:scale-90"
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                )}
+
+                <Button variant="secondary" className="w-full" disabled={!canEstimate || estimating} onClick={handleEstimate}>
+                  {estimating && <Loader2 size={14} className="animate-spin" />}
+                  {estimating ? "Asking AI…" : "Ask AI"}
+                </Button>
+
+                {estimateError && (
+                  <p className="px-1 text-[12px]" style={{ color: "var(--calories)" }}>
+                    {estimateError}
+                  </p>
+                )}
+
+                {lastEstimate && !estimateError && (
+                  <div className="rounded-[12px] border border-separator bg-surface px-3 py-2.5">
+                    <p className="text-[12px] font-medium capitalize">
+                      {lastEstimate.confidence} confidence · {lastEstimate.servingDescription}
+                    </p>
+                    <p className="mt-0.5 text-[12px] text-muted">{lastEstimate.notes}</p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
           )}
-        </div>
-      )}
+
+          {mode === "search" && (
+            <motion.div
+              key="search"
+              layout
+              custom={modeDirection}
+              variants={modeSlideVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.15, ease: [0.23, 1, 0.32, 1] }}
+            >
+              <div className="mb-4 flex items-center gap-2 rounded-[12px] bg-ring-track px-3 py-2.5">
+                <Search size={15} className="text-muted-2 shrink-0" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search or enter food name"
+                  className="w-full bg-transparent text-[15px] outline-none placeholder:text-muted-2"
+                />
+              </div>
+
+              {!isSearching && recentFoods.length > 0 && (
+                <div className="mb-5 -mx-5 overflow-x-auto no-scrollbar">
+                  <p className="mb-2 px-5 text-[12px] font-medium text-muted">Recently logged</p>
+                  <div className="flex gap-2 px-5">
+                    {recentFoods.map((entry) => (
+                      <button
+                        key={entry.name}
+                        onClick={() => applySuggestion(entry)}
+                        className={cn(
+                          "max-w-40 shrink-0 truncate rounded-full border py-1.5 pl-3 pr-4 text-[13px] font-medium transition-transform active:scale-95",
+                          form.name === entry.name
+                            ? "border-accent bg-accent/10 text-accent"
+                            : "border-separator bg-surface text-foreground",
+                        )}
+                      >
+                        {entry.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {isSearching && (
+                <div className="mb-5 flex flex-col gap-2">
+                  {searching && <p className="px-1 text-[12px] text-muted-2">Searching…</p>}
+
+                  {!searching && searchWarnings.length > 0 && (
+                    <p className="px-1 text-[12px]" style={{ color: "var(--calories)" }}>
+                      {searchWarnings.join(" · ")}
+                      {searchResults.length > 0 ? " — results may be incomplete." : " Try again in a moment."}
+                    </p>
+                  )}
+
+                  {!searching && searchResults.length > 0 && (
+                    <div className="no-scrollbar flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+                      {searchResults.map((food) => (
+                        <button
+                          key={food.id}
+                          type="button"
+                          onClick={() => applyFoodResult(food)}
+                          className={cn(
+                            "flex items-center justify-between gap-3 rounded-[12px] border px-3 py-2.5 text-left transition-transform active:scale-[0.98]",
+                            selectedFoodId === food.id
+                              ? "border-accent bg-accent/10"
+                              : "border-separator bg-surface",
+                          )}
+                        >
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <CategoryBadge category={food.category} />
+                            <div className="min-w-0">
+                              <p className="truncate text-[14px] font-medium">{food.name}</p>
+                              <p className="truncate text-[12px] text-muted">
+                                {food.brand ? `${food.brand} · ` : ""}
+                                {FOOD_SOURCE_LABEL[food.source]}
+                              </p>
+                            </div>
+                          </div>
+                          <p className="shrink-0 text-[12px] tabular-nums text-muted">{formatFoodStat(food)}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {!searching && searchWarnings.length === 0 && searchResults.length === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDescribeText(query);
+                        changeMode("describe");
+                      }}
+                      className="px-1 text-left text-[12px] font-medium text-accent"
+                    >
+                      Can&apos;t find it, try asking AI
+                    </button>
+                  )}
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {mode === "recipe" && (
+            <motion.div
+              key="recipe"
+              layout
+              custom={modeDirection}
+              variants={modeSlideVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.15, ease: [0.23, 1, 0.32, 1] }}
+            >
+              <div className="mb-4 flex items-center gap-2 rounded-[12px] bg-ring-track px-3 py-2.5">
+                <ChefHat size={15} className="text-muted-2 shrink-0" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search your recipes"
+                  className="w-full bg-transparent text-[15px] outline-none placeholder:text-muted-2"
+                />
+              </div>
+
+              {isSearching && (
+                <div className="mb-5 flex flex-col gap-2">
+                  {searchingRecipes && <p className="px-1 text-[12px] text-muted-2">Searching…</p>}
+
+                  {!searchingRecipes && recipeResults.length > 0 && (
+                    <div className="no-scrollbar flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+                      {recipeResults.map((recipe) => (
+                        <button
+                          key={recipe.id}
+                          type="button"
+                          onClick={() => applyRecipeResult(recipe)}
+                          className={cn(
+                            "flex items-center justify-between gap-3 rounded-[12px] border px-3 py-2.5 text-left transition-transform active:scale-[0.98]",
+                            selectedRecipeId === recipe.id
+                              ? "border-accent bg-accent/10"
+                              : "border-separator bg-surface",
+                          )}
+                        >
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ring-track text-muted">
+                              <ChefHat size={14} />
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="truncate text-[14px] font-medium">{recipe.name}</p>
+                                {recipe.isPublic && (
+                                  <Globe2 size={11} className="shrink-0 text-muted-2" aria-label="Public recipe" />
+                                )}
+                              </div>
+                              <p className="truncate text-[12px] text-muted">
+                                {recipe.isOwner ? `${recipe.servings} servings` : `by ${recipe.ownerName}`}
+                              </p>
+                            </div>
+                          </div>
+                          <p className="shrink-0 text-[12px] tabular-nums text-muted">
+                            {Math.round(recipe.macros.perServingCalories)} kcal/serving
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {!searchingRecipes && recipeResults.length === 0 && (
+                    <p className="px-1 text-[12px] text-muted-2">
+                      No recipes found — create one from the Recipes tab.
+                    </p>
+                  )}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
 
       <div className={cn("flex flex-col gap-3", desktop && "lg:grid lg:grid-cols-2 lg:gap-x-4")}>
         <label className="flex flex-col gap-1 lg:col-span-2">
@@ -701,12 +892,14 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
           />
           <label className="flex flex-col gap-1">
             <span className="text-[12px] font-medium text-muted">Unit</span>
-            {baseline ? (
+            {baseline || selectedRecipeId ? (
               // A catalog pick's unit is intrinsic to its stored per-100 data —
               // shown, not editable, so it can't be reinterpreted (e.g. "100g" of
-              // chicken relabeled as "100 pcs").
+              // chicken relabeled as "100 pcs"). Same reasoning for a recipe pick:
+              // "servings" isn't one of g/ml/pcs, so the field is locked rather
+              // than letting it be switched to something that implies it can.
               <div className="flex h-full items-center rounded-[12px] bg-ring-track px-3 py-1.5 text-[13px] font-medium text-muted">
-                {form.unit}
+                {selectedRecipeId ? "serving" : form.unit}
               </div>
             ) : (
               <SegmentedControl options={UNIT_OPTIONS} value={form.unit} onChange={handleUnitChange} />

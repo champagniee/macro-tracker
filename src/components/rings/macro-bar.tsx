@@ -7,15 +7,19 @@ import { cn, formatNumber } from "@/lib/utils";
 interface MacroBarProps {
   label: string;
   value: number;
-  goal: number;
+  // Omit for a goal-less display — pass `progress` (0-1) directly instead,
+  // since there's no value/goal ratio to derive it from (e.g. a recipe's
+  // share of that serving's calories, not progress toward a daily target).
+  goal?: number;
+  progress?: number;
   unit?: string;
   color: string;
   icon: LucideIcon;
 }
 
-export function MacroBar({ label, value, goal, unit = "g", color, icon: Icon }: MacroBarProps) {
+export function MacroBar({ label, value, goal, progress, unit = "g", color, icon: Icon }: MacroBarProps) {
   const reduceMotion = useReducedMotion();
-  const progress = Math.min(value / goal, 1);
+  const fillProgress = goal !== undefined ? Math.min(value / goal, 1) : (progress ?? 0);
 
   return (
     <div className="flex flex-1 flex-col gap-2 rounded-[16px] bg-surface p-3 shadow-[var(--shadow-card)]">
@@ -25,14 +29,16 @@ export function MacroBar({ label, value, goal, unit = "g", color, icon: Icon }: 
       </div>
       <div className="flex items-baseline gap-1">
         <span className="text-[17px] font-semibold tabular-nums">{formatNumber(value)}</span>
-        <span className="text-[12px] text-muted-2">/ {formatNumber(goal)}{unit}</span>
+        <span className="text-[12px] text-muted-2">
+          {goal !== undefined ? `/ ${formatNumber(goal)}${unit}` : unit}
+        </span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-ring-track">
         <motion.div
           className={cn("h-full rounded-full")}
           style={{ backgroundColor: color }}
           initial={{ width: 0 }}
-          animate={{ width: `${progress * 100}%` }}
+          animate={{ width: `${fillProgress * 100}%` }}
           transition={
             reduceMotion
               ? { duration: 0.2 }

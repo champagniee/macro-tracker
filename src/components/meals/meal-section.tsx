@@ -13,9 +13,12 @@ interface MealSectionProps {
   // empty state) — used by History's day-detail view for past, uneditable days.
   onAdd?: (meal: MealType) => void;
   onDelete?: (id: string) => void;
+  // Independent of onDelete — History's day-detail view passes this without
+  // onDelete, so past entries are viewable but not editable.
+  onSelect?: (entry: FoodEntry) => void;
 }
 
-export function MealSection({ meal, entries, onAdd, onDelete }: MealSectionProps) {
+export function MealSection({ meal, entries, onAdd, onDelete, onSelect }: MealSectionProps) {
   const total = entries.reduce((sum, e) => sum + e.calories, 0);
 
   return (
@@ -44,7 +47,7 @@ export function MealSection({ meal, entries, onAdd, onDelete }: MealSectionProps
         <div className="divide-y divide-separator border-t border-separator">
           <AnimatePresence initial={false}>
             {entries.map((entry) => (
-              <FoodRow key={entry.id} entry={entry} onDelete={onDelete} />
+              <FoodRow key={entry.id} entry={entry} onDelete={onDelete} onSelect={onSelect} />
             ))}
           </AnimatePresence>
         </div>

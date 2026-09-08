@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/components/auth-provider";
+import { AppToaster } from "@/components/app-toaster";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -32,7 +32,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <ThemeProvider>
           <AuthProvider>
             {children}
-            <Toaster position="top-center" richColors closeButton />
+            <AppToaster />
           </AuthProvider>
         </ThemeProvider>
       </body>

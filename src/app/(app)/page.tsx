@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { CalorieRing } from "@/components/rings/calorie-ring";
 import { MacroBar } from "@/components/rings/macro-bar";
 import { MealSection } from "@/components/meals/meal-section";
+import { FoodEntryDetailSheet } from "@/components/meals/food-entry-detail-sheet";
 import { AddFoodSheet } from "@/components/add-food/add-food-sheet";
 import { EditGoalsSheet } from "@/components/goals/edit-goals-sheet";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -39,6 +40,7 @@ function TodayContent() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [activeMeal, setActiveMeal] = useState<MealType>("Breakfast");
   const [goalsSheetOpen, setGoalsSheetOpen] = useState(false);
+  const [selectedEntry, setSelectedEntry] = useState<FoodEntry | null>(null);
 
   // Google sign-in redirects here with `?welcome=1` only for a genuinely new
   // account (email/password shows its welcome toast immediately, client-side,
@@ -151,6 +153,7 @@ function TodayContent() {
                 entries={entries.filter((e) => e.meal === meal)}
                 onAdd={openSheet}
                 onDelete={handleDelete}
+                onSelect={setSelectedEntry}
               />
             ))}
           </div>
@@ -174,6 +177,12 @@ function TodayContent() {
       />
 
       <EditGoalsSheet open={goalsSheetOpen} onOpenChange={setGoalsSheetOpen} />
+
+      <FoodEntryDetailSheet
+        entry={selectedEntry}
+        onOpenChange={(open) => !open && setSelectedEntry(null)}
+        onDelete={handleDelete}
+      />
     </>
   );
 }

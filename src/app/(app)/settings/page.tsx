@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Collapse } from "@/components/ui/collapse";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/components/auth-provider";
 import { useIsClient } from "@/lib/use-is-client";
@@ -205,8 +206,8 @@ export default function SettingsPage() {
               />
             </button>
 
-            {reportOpen && (
-              <>
+            <Collapse open={reportOpen}>
+              <div className="flex flex-col gap-3 pt-3">
                 <textarea
                   value={reportText}
                   onChange={(e) => setReportText(e.target.value)}
@@ -222,8 +223,8 @@ export default function SettingsPage() {
                 >
                   {sendingReport ? "Sending…" : "Send Report"}
                 </Button>
-              </>
-            )}
+              </div>
+            </Collapse>
           </section>
         )}
 

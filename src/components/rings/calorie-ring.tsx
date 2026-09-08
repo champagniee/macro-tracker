@@ -5,7 +5,10 @@ import { formatNumber } from "@/lib/utils";
 
 interface CalorieRingProps {
   consumed: number;
-  goal: number;
+  // Omit for a goal-less display (e.g. a recipe's per-serving total, which
+  // has nothing to be "remaining" toward) — the ring renders full and the
+  // center just shows the raw number instead of remaining/over.
+  goal?: number;
   size?: number;
   strokeWidth?: number;
 }
@@ -19,19 +22,20 @@ export function CalorieRing({
   const reduceMotion = useReducedMotion();
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
-  const progress = Math.min(consumed / goal, 1);
-  const remaining = Math.max(goal - consumed, 0);
-  const over = consumed > goal;
+  const hasGoal = goal !== undefined;
+  const progress = hasGoal ? Math.min(consumed / goal, 1) : 1;
+  const remaining = hasGoal ? Math.max(goal - consumed, 0) : 0;
+  const over = hasGoal && consumed > goal;
 
   // Once over goal, the main ring reads as "full" (its 0-100% story is
   // done) and a smaller inset ring takes over, tracking the excess as its
   // own lap of the goal amount — so going 2x over goal shows a full inner
   // ring too, not an inner ring stuck at 100% forever.
-  const excess = Math.max(consumed - goal, 0);
+  const excess = hasGoal ? Math.max(consumed - goal, 0) : 0;
   const overflowStrokeWidth = strokeWidth * 0.6;
   const overflowRadius = radius - strokeWidth / 2 - overflowStrokeWidth / 2 - 4;
   const overflowCircumference = 2 * Math.PI * overflowRadius;
-  const overflowProgress = over && goal > 0 ? Math.min(excess / goal, 1) : 0;
+  const overflowProgress = over && hasGoal && goal > 0 ? Math.min(excess / goal, 1) : 0;
 
   const transition = reduceMotion
     ? { duration: 0.2 }
@@ -89,18 +93,29 @@ export function CalorieRing({
         )}
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span
-          className="text-[13px] font-medium text-muted"
-          style={over ? { color: "var(--calories-over)" } : undefined}
-        >
-          {over ? "Over" : "Remaining"}
-        </span>
-        <span className="text-[40px] font-semibold tracking-tight tabular-nums">
-          {formatNumber(over ? consumed - goal : remaining)}
-        </span>
-        <span className="text-[13px] text-muted-2">
-          of {formatNumber(goal)} kcal
-        </span>
+        {hasGoal ? (
+          <>
+            <span
+              className="text-[13px] font-medium text-muted"
+              style={over ? { color: "var(--calories-over)" } : undefined}
+            >
+              {over ? "Over" : "Remaining"}
+            </span>
+            <span className="text-[40px] font-semibold tracking-tight tabular-nums">
+              {formatNumber(over ? consumed - goal : remaining)}
+            </span>
+            <span className="text-[13px] text-muted-2">
+              of {formatNumber(goal)} kcal
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="text-[40px] font-semibold tracking-tight tabular-nums">
+              {formatNumber(consumed)}
+            </span>
+            <span className="text-[13px] text-muted-2">kcal</span>
+          </>
+        )}
       </div>
     </div>
   );

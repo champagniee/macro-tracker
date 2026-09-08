@@ -27,7 +27,15 @@ export async function GET(request: Request) {
   try {
     return NextResponse.redirect(getGoogleAuthUrl(redirectUri, { state, codeVerifier, codeChallenge }));
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Google sign-in is not configured";
+    // This only throws on misconfiguration (missing GOOGLE_CLIENT_ID/SECRET)
+    // — the real message names which env var is missing, useful in
+    // development but not something to hand to an end user in production.
+    const message =
+      process.env.NODE_ENV === "production"
+        ? "Google sign-in is not available right now"
+        : err instanceof Error
+          ? err.message
+          : "Google sign-in is not configured";
     return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(message)}`, request.url));
   }
 }

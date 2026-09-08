@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Calculator, ChevronDown } from "lucide-react";
 import { NumericField } from "@/components/ui/numeric-field";
 import { Button } from "@/components/ui/button";
+import { Collapse } from "@/components/ui/collapse";
 import {
   calculateGoals,
   lbToKg,
@@ -97,61 +98,63 @@ export function GoalCalculator({ onCalculate }: GoalCalculatorProps) {
     setOpen(false);
   }
 
-  if (!open) {
-    return (
-      <Button variant="secondary" className="w-full" onClick={() => setOpen(true)}>
-        <Calculator size={16} />
-        Calculate Target Macros
-      </Button>
-    );
-  }
-
   return (
-    <div className="flex flex-col gap-3 rounded-[12px] border border-separator bg-surface p-3">
-      <p className="text-[11px] leading-4 text-muted-2">
-        Uses the Mifflin-St Jeor formula on your stats, scaled by activity level — a fixed
-        calculation, not a guess.
-      </p>
-
-      <div className="grid grid-cols-2 gap-3">
-        <Dropdown label="Sex" value={sex} onChange={setSex} options={SEX_OPTIONS} />
-        <Dropdown label="Units" value={units} onChange={setUnits} options={UNIT_OPTIONS} />
-      </div>
-
-      <div className="grid grid-cols-3 gap-3">
-        <NumericField label="Age" unit="yrs" value={age} onChange={(e) => setAge(e.target.value)} />
-        <NumericField
-          label="Weight"
-          unit={weightUnit}
-          value={weight}
-          onChange={(e) => setWeight(e.target.value)}
-        />
-        <NumericField
-          label="Height"
-          unit={heightUnit}
-          value={height}
-          onChange={(e) => setHeight(e.target.value)}
-        />
-      </div>
-
-      <Dropdown
-        label="Activity level"
-        value={activityLevel}
-        onChange={setActivityLevel}
-        options={ACTIVITY_LEVELS}
-        labels={ACTIVITY_LEVEL_LABELS}
-      />
-
-      <Dropdown label="Goal" value={goal} onChange={setGoal} options={GOAL_OPTIONS} />
-
-      <div className="mt-1 flex gap-2">
-        <Button className="flex-1" onClick={handleCalculate} disabled={!canCalculate}>
-          Calculate Goals
+    <div className="flex flex-col gap-3">
+      {!open && (
+        <Button variant="secondary" className="w-full" onClick={() => setOpen(true)}>
+          <Calculator size={16} />
+          Calculate Target Macros
         </Button>
-        <Button variant="secondary" onClick={() => setOpen(false)}>
-          Close
-        </Button>
-      </div>
+      )}
+
+      <Collapse open={open}>
+        <div className="flex flex-col gap-3 rounded-[12px] border border-separator bg-surface p-3">
+          <p className="text-[11px] leading-4 text-muted-2">
+            Uses the Mifflin-St Jeor formula on your stats, scaled by activity level — a fixed
+            calculation, not a guess.
+          </p>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Dropdown label="Sex" value={sex} onChange={setSex} options={SEX_OPTIONS} />
+            <Dropdown label="Units" value={units} onChange={setUnits} options={UNIT_OPTIONS} />
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <NumericField label="Age" unit="yrs" value={age} onChange={(e) => setAge(e.target.value)} />
+            <NumericField
+              label="Weight"
+              unit={weightUnit}
+              value={weight}
+              onChange={(e) => setWeight(e.target.value)}
+            />
+            <NumericField
+              label="Height"
+              unit={heightUnit}
+              value={height}
+              onChange={(e) => setHeight(e.target.value)}
+            />
+          </div>
+
+          <Dropdown
+            label="Activity level"
+            value={activityLevel}
+            onChange={setActivityLevel}
+            options={ACTIVITY_LEVELS}
+            labels={ACTIVITY_LEVEL_LABELS}
+          />
+
+          <Dropdown label="Goal" value={goal} onChange={setGoal} options={GOAL_OPTIONS} />
+
+          <div className="mt-1 flex gap-2">
+            <Button className="flex-1" onClick={handleCalculate} disabled={!canCalculate}>
+              Calculate Goals
+            </Button>
+            <Button variant="secondary" onClick={() => setOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </div>
+      </Collapse>
     </div>
   );
 }

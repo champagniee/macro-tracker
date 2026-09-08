@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import { Globe2, Plus } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CreateRecipeSheet } from "@/components/recipes/create-recipe-sheet";
+import { RecipeDetailSheet } from "@/components/recipes/recipe-detail-sheet";
+import { MacroLetterBadge } from "@/components/rings/macro-letter-badge";
 import { formatNumber } from "@/lib/utils";
 
 interface RecipeSummary {
@@ -27,6 +28,7 @@ export default function RecipesPage() {
   const [recipes, setRecipes] = useState<RecipeSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null);
 
   const loadRecipes = useCallback(async () => {
     const res = await fetch("/api/recipes", { cache: "no-store" });
@@ -58,28 +60,36 @@ export default function RecipesPage() {
           ))
         ) : recipes.length > 0 ? (
           recipes.map((recipe) => (
-            <Link
+            <button
               key={recipe.id}
-              href={`/recipes/${recipe.id}`}
-              className="flex flex-col gap-1 rounded-[var(--radius-card)] bg-surface p-4 shadow-[var(--shadow-card)] transition-transform active:scale-[0.98]"
+              type="button"
+              onClick={() => setSelectedRecipeId(recipe.id)}
+              className="flex items-center justify-between gap-3 rounded-[var(--radius-card)] bg-surface p-4 text-left shadow-[var(--shadow-card)] transition-transform active:scale-[0.98]"
             >
-              <div className="flex items-center gap-1.5">
-                <p className="min-w-0 truncate text-[15px] font-medium">{recipe.name}</p>
-                {recipe.isPublic && (
-                  <Globe2 size={12} className="shrink-0 text-muted-2" aria-label="Public recipe" />
-                )}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <p className="min-w-0 truncate text-[15px] font-medium">{recipe.name}</p>
+                  {recipe.isPublic && (
+                    <Globe2 size={12} className="shrink-0 text-muted-2" aria-label="Public recipe" />
+                  )}
+                </div>
+                <p className="truncate text-[12px] text-muted">
+                  {recipe.ingredientCount} ingredient{recipe.ingredientCount === 1 ? "" : "s"} ·{" "}
+                  {recipe.servings} serving{recipe.servings === 1 ? "" : "s"}
+                  {!recipe.isOwner && ` · by ${recipe.ownerName}`}
+                </p>
               </div>
-              <p className="text-[12px] text-muted">
-                {recipe.ingredientCount} ingredient{recipe.ingredientCount === 1 ? "" : "s"} ·{" "}
-                {recipe.servings} serving{recipe.servings === 1 ? "" : "s"}
-                {!recipe.isOwner && ` · by ${recipe.ownerName}`}
-              </p>
-              <p className="mt-1 text-[13px] tabular-nums text-muted">
-                {formatNumber(recipe.macros.perServingCalories)} kcal · P
-                {formatNumber(recipe.macros.perServingProtein)} · C
-                {formatNumber(recipe.macros.perServingCarbs)} · F{formatNumber(recipe.macros.perServingFat)}
-              </p>
-            </Link>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <span className="text-[13px] font-semibold tabular-nums">
+                  {formatNumber(recipe.macros.perServingCalories)} kcal
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <MacroLetterBadge letter="P" value={recipe.macros.perServingProtein} color="var(--protein)" />
+                  <MacroLetterBadge letter="C" value={recipe.macros.perServingCarbs} color="var(--carbs)" />
+                  <MacroLetterBadge letter="F" value={recipe.macros.perServingFat} color="var(--fat)" />
+                </div>
+              </div>
+            </button>
           ))
         ) : (
           <div className="col-span-full mx-0 flex flex-col items-center gap-1 rounded-[var(--radius-card)] bg-surface px-5 py-10 text-center shadow-[var(--shadow-card)]">
@@ -98,6 +108,12 @@ export default function RecipesPage() {
       </button>
 
       <CreateRecipeSheet open={sheetOpen} onOpenChange={setSheetOpen} onCreated={loadRecipes} />
+
+      <RecipeDetailSheet
+        recipeId={selectedRecipeId}
+        onOpenChange={(open) => !open && setSelectedRecipeId(null)}
+        onChanged={loadRecipes}
+      />
     </>
   );
 }
