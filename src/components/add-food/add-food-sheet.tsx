@@ -12,9 +12,8 @@ import { useRecipeSearch, type RecipeSearchResult } from "@/components/food-sear
 import { FOOD_SOURCE_LABEL, formatFoodStat, type FoodSearchResult } from "@/components/food-search/types";
 import { CategoryBadge } from "@/components/food-search/category-badge";
 import { MacroLetterBadge } from "@/components/rings/macro-letter-badge";
-import { BarcodeScanner } from "@/components/add-food/barcode-scanner";
+import { BarcodeScanner, type BarcodeScanStatus } from "@/components/add-food/barcode-scanner";
 import type { FoodCategory } from "@/lib/food-sources/categories";
-import type { NormalizedFood } from "@/lib/food-sources/types";
 import type { MacroEstimate } from "@/lib/llm/estimate-macros";
 import { MEAL_ORDER } from "@/lib/mock-data";
 import { useMediaQuery } from "@/lib/use-media-query";
@@ -87,10 +86,13 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
   const desktop = useMediaQuery("(min-width: 1024px)");
   const [meal, setMeal] = useState<MealType>(defaultMeal);
   const [query, setQuery] = useState("");
-  // Barcode scan: camera overlay open state, plus a brief loading window
-  // between a code being detected and the Open Food Facts lookup resolving.
+  // Barcode scan: camera overlay open state, plus what stage it's showing —
+  // the scanner stays open (and visibly reflects "looking up…") through the
+  // lookup instead of closing the instant a code is detected, since closing
+  // immediately was the actual complaint (no feedback on whether it worked).
   const [scannerOpen, setScannerOpen] = useState(false);
-  const [scanning, setScanning] = useState(false);
+  const [scanStatus, setScanStatus] = useState<BarcodeScanStatus>("scanning");
+  const [scanErrorMessage, setScanErrorMessage] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   // The catalog food (if any) currently backing the form, so it can be passed
   // through as food_id on submit. Cleared whenever the name is hand-edited,
@@ -165,7 +167,8 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     setEstimateError(null);
     setLastEstimate(null);
     setScannerOpen(false);
-    setScanning(false);
+    setScanStatus("scanning");
+    setScanErrorMessage(null);
   }
 
   // Reset the form whenever the sheet transitions to open, without doing it
@@ -317,55 +320,35 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     setQuery("");
   }
 
-  // A scanned barcode has a real per-100 rate (like applyFoodResult), just no
-  // existing catalog id — Open Food Facts is looked up live, not cached into
-  // `foods` yet (deliberately deferred). Leaving selectedFoodId null means
-  // resolveCurrentForm's existing "no foodId + a real amount → save as a new
-  // custom food" gate fires on submit exactly like a hand-typed food, giving
-  // it a real id the first time it's actually logged rather than the moment
-  // it's scanned. OFF never classifies into this app's own category enum, so
-  // category stays null (same "Other" fallback any uncategorized food gets).
-  function applyBarcodeResult(food: NormalizedFood) {
-    const amount = food.servingSize ?? 100;
-    const factor = amount / 100;
-    setForm({
-      name: food.name,
-      amount: String(amount),
-      unit: food.baseUnit,
-      servingLabel: food.servingLabel ?? "",
-      category: null,
-      calories: String(Math.round(food.caloriesPer100 * factor)),
-      protein: String(Math.round(food.proteinPer100 * factor)),
-      carbs: String(Math.round(food.carbsPer100 * factor)),
-      fat: String(Math.round(food.fatPer100 * factor)),
-    });
-    setSelectedFoodId(null);
-    setBaseline({
-      caloriesPer100: food.caloriesPer100,
-      proteinPer100: food.proteinPer100,
-      carbsPer100: food.carbsPer100,
-      fatPer100: food.fatPer100,
-    });
-    setSelectedRecipeId(null);
-    setAmountTouched(false);
-    setLastEstimate(null);
-    setQuery("");
-  }
-
+  // The barcode route caches at scan time (checks `foods` by
+  // (source, externalId) before ever calling OFF, upserts on a miss), so
+  // what comes back is always a real, id-bearing catalog row — same shape
+  // applyFoodResult already handles for a normal search pick. No separate
+  // apply function needed.
+  //
+  // The scanner stays open through the lookup instead of closing the
+  // instant a code is detected — closing immediately gave zero feedback on
+  // whether anything actually happened. Only closes on success; a failure
+  // keeps the camera up with a retryable error instead of dumping the user
+  // back at the form with just a toast.
   async function handleBarcodeDetected(code: string) {
-    setScannerOpen(false);
-    setScanning(true);
+    setScanStatus("looking-up");
     try {
       const res = await fetch(`/api/foods/barcode/${encodeURIComponent(code)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Couldn't find that product");
-      applyBarcodeResult(data.food as NormalizedFood);
+      applyFoodResult(data.food as FoodSearchResult);
       toast.success(`Found "${data.food.name}"`);
+      setScannerOpen(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't look up that barcode");
-    } finally {
-      setScanning(false);
+      setScanErrorMessage(err instanceof Error ? err.message : "Couldn't look up that barcode");
+      setScanStatus("error");
     }
+  }
+
+  function handleScanRetry() {
+    setScanErrorMessage(null);
+    setScanStatus("scanning");
   }
 
   // A recipe's per-serving macros become the form's numbers for "1" serving,
@@ -828,12 +811,15 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
                 />
                 <button
                   type="button"
-                  onClick={() => setScannerOpen(true)}
-                  disabled={scanning}
+                  onClick={() => {
+                    setScanStatus("scanning");
+                    setScanErrorMessage(null);
+                    setScannerOpen(true);
+                  }}
                   aria-label="Scan a barcode"
-                  className="shrink-0 text-muted-2 transition-transform active:scale-90 disabled:opacity-50"
+                  className="shrink-0 text-muted-2 transition-transform active:scale-90"
                 >
-                  {scanning ? <Loader2 size={17} className="animate-spin" /> : <ScanBarcode size={17} />}
+                  <ScanBarcode size={17} />
                 </button>
               </div>
 
@@ -1176,8 +1162,11 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
 
     <BarcodeScanner
       open={scannerOpen}
+      status={scanStatus}
+      errorMessage={scanErrorMessage}
       onClose={() => setScannerOpen(false)}
       onDetected={handleBarcodeDetected}
+      onRetry={handleScanRetry}
     />
     </>
   );
