@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Camera, ChefHat, Globe2, Loader2, Search, Sparkles, X } from "lucide-react";
+import { Camera, ChefHat, Globe2, Loader2, ScanBarcode, Search, Sparkles, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { NumericField } from "@/components/ui/numeric-field";
@@ -11,7 +12,9 @@ import { useRecipeSearch, type RecipeSearchResult } from "@/components/food-sear
 import { FOOD_SOURCE_LABEL, formatFoodStat, type FoodSearchResult } from "@/components/food-search/types";
 import { CategoryBadge } from "@/components/food-search/category-badge";
 import { MacroLetterBadge } from "@/components/rings/macro-letter-badge";
+import { BarcodeScanner } from "@/components/add-food/barcode-scanner";
 import type { FoodCategory } from "@/lib/food-sources/categories";
+import type { NormalizedFood } from "@/lib/food-sources/types";
 import type { MacroEstimate } from "@/lib/llm/estimate-macros";
 import { MEAL_ORDER } from "@/lib/mock-data";
 import { useMediaQuery } from "@/lib/use-media-query";
@@ -84,6 +87,10 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
   const desktop = useMediaQuery("(min-width: 1024px)");
   const [meal, setMeal] = useState<MealType>(defaultMeal);
   const [query, setQuery] = useState("");
+  // Barcode scan: camera overlay open state, plus a brief loading window
+  // between a code being detected and the Open Food Facts lookup resolving.
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [form, setForm] = useState(emptyForm);
   // The catalog food (if any) currently backing the form, so it can be passed
   // through as food_id on submit. Cleared whenever the name is hand-edited,
@@ -157,6 +164,8 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     setEstimating(false);
     setEstimateError(null);
     setLastEstimate(null);
+    setScannerOpen(false);
+    setScanning(false);
   }
 
   // Reset the form whenever the sheet transitions to open, without doing it
@@ -193,6 +202,13 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
 
   const canSubmit = form.name.trim().length > 0 && Number(form.calories) > 0;
 
+  // True only for a "Describe it" estimate of a whole dish (not a single
+  // ingredient) — see applyEstimate. Drives both the Amount/Unit display
+  // (treated like a recipe pick: "1 serving", locked) and, in
+  // resolveCurrentForm, which numbers get saved as the food's own catalog
+  // serving size.
+  const isMealEstimate = lastEstimate !== null && lastEstimate.category === "meal";
+
   // Recently-logged entries only ever stored a freeform "serving" display
   // string ("150g", "1 slice", ...), not a structured amount+unit — so there's
   // never a real number to show in Amount from the entry alone. Two cases:
@@ -227,7 +243,15 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
         const res = await fetch(`/api/foods/${entry.foodId}`);
         if (res.ok) {
           const { food } = (await res.json()) as { food: FoodSearchResult };
-          setForm({ ...base, amount: String(food.servingSize ?? 100), unit: food.baseUnit, category: food.category });
+          // Same "1 serving" display as applyFoodResult for a meal — baseline
+          // is already null on this path regardless, so this only changes what
+          // Amount/Unit show, not how a later edit rescales entry.calories etc.
+          setForm({
+            ...base,
+            amount: food.category === "meal" ? "1" : String(food.servingSize ?? 100),
+            unit: food.baseUnit,
+            category: food.category,
+          });
           setSelectedFoodId(entry.foodId);
           setBaseline(null);
           setSelectedRecipeId(null);
@@ -252,12 +276,22 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
   // serving size (falling back to 100, i.e. "per 100g/ml") for the logged
   // amount, and keep the per-100 baseline around so editing Amount afterward
   // can rescale live instead of only computing once here.
+  //
+  // A "meal" (a previously AI-estimated or hand-saved whole dish, re-found via
+  // search) gets the same "1 serving" treatment as a fresh estimate or a
+  // recipe pick — see applyEstimate — rather than showing its raw stored
+  // servingSize/baseUnit (e.g. "258g"), which is meaningless to re-log by.
+  // No per-100 baseline is kept for a meal: `factor` still converts its
+  // stored per-100 rate into real "1 serving" macros once, up front, and
+  // handleAmountChange's baseline-less proportional-scaling branch (already
+  // used by recipes) takes over correctly from there if Amount is edited.
   function applyFoodResult(food: FoodSearchResult) {
+    const isMeal = food.category === "meal";
     const amount = food.servingSize ?? 100;
     const factor = amount / 100;
     setForm({
       name: food.name,
-      amount: String(amount),
+      amount: isMeal ? "1" : String(amount),
       unit: food.baseUnit,
       servingLabel: food.servingLabel ?? "",
       category: food.category,
@@ -267,6 +301,45 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
       fat: String(Math.round(food.fatPer100 * factor)),
     });
     setSelectedFoodId(food.id);
+    setBaseline(
+      isMeal
+        ? null
+        : {
+            caloriesPer100: food.caloriesPer100,
+            proteinPer100: food.proteinPer100,
+            carbsPer100: food.carbsPer100,
+            fatPer100: food.fatPer100,
+          },
+    );
+    setSelectedRecipeId(null);
+    setAmountTouched(false);
+    setLastEstimate(null);
+    setQuery("");
+  }
+
+  // A scanned barcode has a real per-100 rate (like applyFoodResult), just no
+  // existing catalog id — Open Food Facts is looked up live, not cached into
+  // `foods` yet (deliberately deferred). Leaving selectedFoodId null means
+  // resolveCurrentForm's existing "no foodId + a real amount → save as a new
+  // custom food" gate fires on submit exactly like a hand-typed food, giving
+  // it a real id the first time it's actually logged rather than the moment
+  // it's scanned. OFF never classifies into this app's own category enum, so
+  // category stays null (same "Other" fallback any uncategorized food gets).
+  function applyBarcodeResult(food: NormalizedFood) {
+    const amount = food.servingSize ?? 100;
+    const factor = amount / 100;
+    setForm({
+      name: food.name,
+      amount: String(amount),
+      unit: food.baseUnit,
+      servingLabel: food.servingLabel ?? "",
+      category: null,
+      calories: String(Math.round(food.caloriesPer100 * factor)),
+      protein: String(Math.round(food.proteinPer100 * factor)),
+      carbs: String(Math.round(food.carbsPer100 * factor)),
+      fat: String(Math.round(food.fatPer100 * factor)),
+    });
+    setSelectedFoodId(null);
     setBaseline({
       caloriesPer100: food.caloriesPer100,
       proteinPer100: food.proteinPer100,
@@ -277,6 +350,22 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     setAmountTouched(false);
     setLastEstimate(null);
     setQuery("");
+  }
+
+  async function handleBarcodeDetected(code: string) {
+    setScannerOpen(false);
+    setScanning(true);
+    try {
+      const res = await fetch(`/api/foods/barcode/${encodeURIComponent(code)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Couldn't find that product");
+      applyBarcodeResult(data.food as NormalizedFood);
+      toast.success(`Found "${data.food.name}"`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't look up that barcode");
+    } finally {
+      setScanning(false);
+    }
   }
 
   // A recipe's per-serving macros become the form's numbers for "1" serving,
@@ -311,14 +400,24 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
   // Gemini's estimate is already for a specific described amount (not a
   // per-100 rate to scale from), so unlike applyFoodResult there's no
   // baseline to keep — Amount edits afterward behave like a hand-typed food.
+  //
+  // A "meal" (a whole composite dish, per estimate-macros.ts's own category
+  // guidance) gets Amount/Unit treated like a recipe pick instead of a raw
+  // ingredient: Amount starts at "1" and Unit displays "serving" (locked),
+  // since Gemini can and does pick "g"/"ml" for a whole plate — real grams
+  // are meaningful for a single ingredient, not for "how many platefuls am I
+  // logging." The real servingSize/servingUnit Gemini estimated stays on
+  // `lastEstimate` for the catalog-food save in resolveCurrentForm, which
+  // needs the food's own actual per-serving size, not "how many of it".
   function applyEstimate(estimate: MacroEstimate) {
+    const isMeal = estimate.category === "meal";
     setForm({
       name: estimate.name,
       // A real amount+unit (not just a display string) is what lets submit
       // save this as a reusable custom food — previously left blank here,
       // which silently skipped that save (the gate in handleSubmit requires
       // a valid amount), unlike recipe ingredients from the same estimate flow.
-      amount: String(estimate.servingSize),
+      amount: isMeal ? "1" : String(estimate.servingSize),
       unit: estimate.servingUnit,
       servingLabel: estimate.servingDescription,
       category: estimate.category,
@@ -473,17 +572,30 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     // isn't a new catalog food, it's just an entry snapshotting that recipe's
     // per-serving macros.
     if (!foodId && hasAmount && !selectedRecipeId) {
+      // A meal estimate's Amount now means "how many servings to log" (see
+      // applyEstimate), not the food's own serving size — save the catalog
+      // food using Gemini's actual per-serving numbers instead of the
+      // possibly-scaled form values, so logging "2 servings" doesn't get
+      // saved back into the catalog as if one serving were twice the size.
+      const mealEstimate = isMealEstimate ? lastEstimate : null;
       try {
         const res = await fetch("/api/foods/custom", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: form.name.trim(),
-            servingSize: amountNum,
-            servingUnit: form.unit,
-            servingLabel: form.servingLabel.trim() || undefined,
+            servingSize: mealEstimate ? mealEstimate.servingSize : amountNum,
+            servingUnit: mealEstimate ? mealEstimate.servingUnit : form.unit,
+            servingLabel: (mealEstimate ? mealEstimate.servingDescription : form.servingLabel.trim()) || undefined,
             category: form.category ?? undefined,
-            ...macros,
+            ...(mealEstimate
+              ? {
+                  calories: Math.round(mealEstimate.calories),
+                  protein: Math.round(mealEstimate.protein),
+                  carbs: Math.round(mealEstimate.carbs),
+                  fat: Math.round(mealEstimate.fat),
+                }
+              : macros),
           }),
         });
         if (res.ok) {
@@ -714,6 +826,15 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
                   placeholder="Search or enter food name"
                   className="w-full bg-transparent text-[15px] outline-none placeholder:text-muted-2"
                 />
+                <button
+                  type="button"
+                  onClick={() => setScannerOpen(true)}
+                  disabled={scanning}
+                  aria-label="Scan a barcode"
+                  className="shrink-0 text-muted-2 transition-transform active:scale-90 disabled:opacity-50"
+                >
+                  {scanning ? <Loader2 size={17} className="animate-spin" /> : <ScanBarcode size={17} />}
+                </button>
               </div>
 
               {!isSearching && recentFoods.length > 0 && (
@@ -894,14 +1015,18 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
           />
           <label className="flex flex-col gap-1">
             <span className="text-[12px] font-medium text-muted">Unit</span>
-            {baseline || selectedRecipeId ? (
+            {baseline || selectedRecipeId || form.category === "meal" ? (
               // A catalog pick's unit is intrinsic to its stored per-100 data —
               // shown, not editable, so it can't be reinterpreted (e.g. "100g" of
-              // chicken relabeled as "100 pcs"). Same reasoning for a recipe pick:
-              // "servings" isn't one of g/ml/pcs, so the field is locked rather
-              // than letting it be switched to something that implies it can.
+              // chicken relabeled as "100 pcs"). Same reasoning for a recipe pick
+              // or any whole-dish pick (a fresh AI estimate, a previously-saved
+              // meal found via search, or re-applied from a "Recently logged"
+              // chip): "servings" isn't one of g/ml/pcs, so the field is locked
+              // rather than letting it be switched to something that implies it
+              // can. `form.category === "meal"` alone covers all of those, since
+              // every pick path that represents a whole dish sets it.
               <div className="flex h-full items-center rounded-[12px] bg-ring-track px-3 py-1.5 text-[13px] font-medium text-muted">
-                {selectedRecipeId ? "serving" : form.unit}
+                {selectedRecipeId || form.category === "meal" ? "serving" : form.unit}
               </div>
             ) : (
               <SegmentedControl options={UNIT_OPTIONS} value={form.unit} onChange={handleUnitChange} />
@@ -988,6 +1113,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
   );
 
   return (
+    <>
     <AnimatePresence>
       {open && (
         <>
@@ -1047,6 +1173,13 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
         </>
       )}
     </AnimatePresence>
+
+    <BarcodeScanner
+      open={scannerOpen}
+      onClose={() => setScannerOpen(false)}
+      onDetected={handleBarcodeDetected}
+    />
+    </>
   );
 }
 
