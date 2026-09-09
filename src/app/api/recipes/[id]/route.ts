@@ -4,7 +4,8 @@ import { db } from "@/db";
 import { recipes, users } from "@/db/schema";
 import { getSession } from "@/lib/auth/session";
 import { getRecipeIngredientDetails, sumRecipeMacros } from "@/lib/recipes/macros";
-import { updateRecipeVisibilitySchema } from "@/lib/recipes/validation";
+import { updateRecipe, RecipeIngredientNotFoundError } from "@/lib/recipes/create-recipe";
+import { createRecipeSchema, updateRecipeVisibilitySchema } from "@/lib/recipes/validation";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -78,6 +79,44 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     .returning({ id: recipes.id, isPublic: recipes.isPublic });
 
   return NextResponse.json({ recipe: updated });
+}
+
+// Full edit — name/servings/visibility/ingredients — distinct from PATCH,
+// which only ever handles the visibility toggle used by RecipeDetailSheet.
+export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "You must be logged in to update a recipe" }, { status: 401 });
+  }
+
+  const { id } = await params;
+
+  const body = await request.json().catch(() => null);
+  const parsed = createRecipeSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid input" },
+      { status: 400 },
+    );
+  }
+
+  const existing = await db.query.recipes.findFirst({ where: eq(recipes.id, id) });
+  if (!existing) {
+    return NextResponse.json({ error: "Recipe not found" }, { status: 404 });
+  }
+  if (existing.userId !== session.sub) {
+    return NextResponse.json({ error: "You can only edit your own recipes" }, { status: 403 });
+  }
+
+  try {
+    const updated = await updateRecipe(id, session.sub, parsed.data);
+    return NextResponse.json({ recipe: updated });
+  } catch (err) {
+    if (err instanceof RecipeIngredientNotFoundError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
+  }
 }
 
 export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {

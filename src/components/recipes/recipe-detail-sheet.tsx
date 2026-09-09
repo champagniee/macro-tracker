@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { X, Trash2, Globe2, Flame, Beef, Wheat, Droplet } from "lucide-react";
+import { X, Trash2, Pencil, Globe2, Flame, Beef, Wheat, Droplet } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -50,14 +50,17 @@ interface RecipeDetailSheetProps {
   onOpenChange: (open: boolean) => void;
   // Called after a change that the list page needs to reflect (delete, or a
   // visibility flip changing the globe badge/owner line) — same "just
-  // re-fetch the list" approach CreateRecipeSheet's onCreated already uses.
+  // re-fetch the list" approach CreateRecipeSheet's onSaved already uses.
   onChanged: () => void;
+  // Owner-only — closes this sheet and hands the recipe id back to the list
+  // page, which opens CreateRecipeSheet in edit mode for it.
+  onEdit: (recipeId: string) => void;
 }
 
 // Same bottom-sheet/desktop-dialog shell as DayDetailSheet — recipes no
 // longer get their own /recipes/[id] page, viewing one is a modal over the
 // list now, consistent with how History views a day.
-export function RecipeDetailSheet({ recipeId, onOpenChange, onChanged }: RecipeDetailSheetProps) {
+export function RecipeDetailSheet({ recipeId, onOpenChange, onChanged, onEdit }: RecipeDetailSheetProps) {
   const desktop = useMediaQuery("(min-width: 1024px)");
   const router = useRouter();
   const open = recipeId !== null;
@@ -192,14 +195,23 @@ export function RecipeDetailSheet({ recipeId, onOpenChange, onChanged }: RecipeD
       <h2 className="min-w-0 truncate text-[17px] font-semibold">{heading}</h2>
       <div className="flex shrink-0 items-center gap-2">
         {recipe?.isOwner && (
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            aria-label="Delete recipe"
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-ring-track text-muted transition-transform active:scale-90 disabled:opacity-40"
-          >
-            <Trash2 size={14} />
-          </button>
+          <>
+            <button
+              onClick={() => onEdit(recipe.id)}
+              aria-label="Edit recipe"
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-ring-track text-muted transition-transform active:scale-90"
+            >
+              <Pencil size={13} />
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              aria-label="Delete recipe"
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-ring-track text-muted transition-transform active:scale-90 disabled:opacity-40"
+            >
+              <Trash2 size={14} />
+            </button>
+          </>
         )}
         <button
           onClick={() => onOpenChange(false)}

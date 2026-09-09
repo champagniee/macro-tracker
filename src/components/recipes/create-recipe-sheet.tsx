@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Sparkles, Search, X, Trash2, Loader2 } from "lucide-react";
+import { Sparkles, Search, X, Trash2, Loader2, Beef, Wheat, Droplet } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { NumericField } from "@/components/ui/numeric-field";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { FoodSearchInput, type FoodSearchResult } from "@/components/food-search/food-search-input";
 import { CategoryBadge } from "@/components/food-search/category-badge";
+import { MacroLetterBadge } from "@/components/rings/macro-letter-badge";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +31,10 @@ interface DraftIngredient {
 interface CreateRecipeSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: () => void;
+  onSaved: () => void;
+  // When set, the sheet loads that recipe's data and edits it in place
+  // (PUT) instead of creating a new one (POST).
+  editRecipeId?: string | null;
 }
 
 function computeTotals(ingredients: DraftIngredient[]) {
@@ -48,13 +52,15 @@ function computeTotals(ingredients: DraftIngredient[]) {
   );
 }
 
-export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecipeSheetProps) {
+export function CreateRecipeSheet({ open, onOpenChange, onSaved, editRecipeId }: CreateRecipeSheetProps) {
   const desktop = useMediaQuery("(min-width: 1024px)");
+  const isEditing = Boolean(editRecipeId);
   const [name, setName] = useState("");
   const [servings, setServings] = useState("1");
   const [visibility, setVisibility] = useState<(typeof VISIBILITY_OPTIONS)[number]>("Private");
   const [ingredients, setIngredients] = useState<DraftIngredient[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [loadingRecipe, setLoadingRecipe] = useState(false);
 
   // "Describe it" mode — decomposes a whole-dish description into real
   // ingredients via Gemini, each saved as a custom food, then appended to the
@@ -84,6 +90,48 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
       setDescribeText("");
       setEstimating(false);
       setEstimateError(null);
+
+      if (editRecipeId) {
+        setLoadingRecipe(true);
+        (async () => {
+          try {
+            const res = await fetch(`/api/recipes/${editRecipeId}`, { cache: "no-store" });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Failed to load recipe");
+            const recipe = data.recipe;
+
+            // The detail endpoint only returns each ingredient's already-scaled
+            // macros, not the underlying food record (category, brand, its own
+            // serving size) — fetch each food directly so the edit form has the
+            // same fidelity a fresh search result would.
+            const foodsById = await Promise.all(
+              recipe.ingredients.map(async (ing: { id: string; foodId?: string }) => {
+                const foodRes = await fetch(`/api/foods/${ing.foodId}`, { cache: "no-store" });
+                const foodData = await foodRes.json();
+                return foodData.food as FoodSearchResult;
+              }),
+            );
+
+            setName(recipe.name);
+            setServings(String(recipe.servings));
+            setVisibility(recipe.isPublic ? "Public" : "Private");
+            setIngredients(
+              recipe.ingredients.map(
+                (ing: { amount: number; amountLabel: string | null }, index: number) => ({
+                  food: foodsById[index],
+                  amount: String(ing.amount),
+                  amountLabel: ing.amountLabel ?? "",
+                }),
+              ),
+            );
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Couldn't load recipe");
+            onOpenChange(false);
+          } finally {
+            setLoadingRecipe(false);
+          }
+        })();
+      }
     }
   }
 
@@ -149,8 +197,8 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
     if (!canSubmit) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/recipes", {
-        method: "POST",
+      const res = await fetch(isEditing ? `/api/recipes/${editRecipeId}` : "/api/recipes", {
+        method: isEditing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: name.trim(),
@@ -164,9 +212,9 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to create recipe");
-      toast.success(`Created ${data.recipe.name}`);
-      onCreated();
+      if (!res.ok) throw new Error(data.error ?? `Failed to ${isEditing ? "save" : "create"} recipe`);
+      toast.success(isEditing ? `Saved ${data.recipe.name}` : `Created ${data.recipe.name}`);
+      onSaved();
       onOpenChange(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Something went wrong");
@@ -177,7 +225,7 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
 
   const header = (
     <div className="flex items-center justify-between px-5 pb-3 pt-3.5 shrink-0">
-      <h2 className="text-[17px] font-semibold">New Recipe</h2>
+      <h2 className="text-[17px] font-semibold">{isEditing ? "Edit Recipe" : "New Recipe"}</h2>
       <button
         onClick={() => onOpenChange(false)}
         aria-label="Close"
@@ -195,6 +243,14 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
         desktop ? "pb-6" : "pb-[calc(env(safe-area-inset-bottom)+96px)]",
       )}
     >
+      {loadingRecipe ? (
+        <div className="flex flex-col gap-3">
+          <div className="h-11 animate-pulse rounded-[12px] bg-ring-track" />
+          <div className="h-11 animate-pulse rounded-[12px] bg-ring-track" />
+          <div className="h-24 animate-pulse rounded-[12px] bg-ring-track" />
+        </div>
+      ) : (
+        <>
       <div className="flex flex-col gap-3">
         <label className="flex flex-col gap-1">
           <span className="text-[12px] font-medium text-muted">Recipe name</span>
@@ -361,30 +417,43 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
       )}
 
       {ingredients.length > 0 && (
-        <div className="mt-4 rounded-[12px] bg-ring-track px-4 py-3">
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-[12px] bg-ring-track px-4 py-3">
           <p className="text-[12px] font-medium text-muted">Per serving ({servingsNum} total)</p>
-          <p className="mt-1 text-[15px] font-semibold tabular-nums">
-            {Math.round(totals.calories / servingsNum)} kcal
-          </p>
-          <p className="text-[12px] tabular-nums text-muted">
-            P{Math.round(totals.protein / servingsNum)} · C{Math.round(totals.carbs / servingsNum)} · F
-            {Math.round(totals.fat / servingsNum)}
-          </p>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <span className="text-[15px] font-semibold tabular-nums">
+              {Math.round(totals.calories / servingsNum)} kcal
+            </span>
+            <div className="flex items-center gap-1.5">
+              <MacroLetterBadge letter="P" value={totals.protein / servingsNum} color="var(--protein)" icon={Beef} />
+              <MacroLetterBadge letter="C" value={totals.carbs / servingsNum} color="var(--carbs)" icon={Wheat} />
+              <MacroLetterBadge letter="F" value={totals.fat / servingsNum} color="var(--fat)" icon={Droplet} />
+            </div>
+          </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );
 
+  const submitLabel = submitting
+    ? isEditing
+      ? "Saving…"
+      : "Creating…"
+    : isEditing
+      ? "Save Changes"
+      : "Create Recipe";
+
   const footer = desktop ? (
     <div className="border-t border-separator px-5 pt-4 pb-5">
-      <Button size="lg" className="w-full" disabled={!canSubmit || submitting} onClick={handleSubmit}>
-        {submitting ? "Creating…" : "Create Recipe"}
+      <Button size="lg" className="w-full" disabled={!canSubmit || submitting || loadingRecipe} onClick={handleSubmit}>
+        {submitLabel}
       </Button>
     </div>
   ) : (
     <div className="absolute inset-x-0 bottom-0 border-t border-separator bg-surface-elevated px-5 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
-      <Button size="lg" className="w-full" disabled={!canSubmit || submitting} onClick={handleSubmit}>
-        {submitting ? "Creating…" : "Create Recipe"}
+      <Button size="lg" className="w-full" disabled={!canSubmit || submitting || loadingRecipe} onClick={handleSubmit}>
+        {submitLabel}
       </Button>
     </div>
   );
@@ -407,7 +476,7 @@ export function CreateRecipeSheet({ open, onOpenChange, onCreated }: CreateRecip
               <motion.div
                 role="dialog"
                 aria-modal="true"
-                aria-label="New recipe"
+                aria-label={isEditing ? "Edit recipe" : "New recipe"}
                 className="relative flex max-h-[85vh] w-full max-w-lg flex-col rounded-[24px] bg-surface-elevated shadow-[var(--shadow-sheet)]"
                 initial={{ opacity: 0, scale: 0.96, y: 8 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}

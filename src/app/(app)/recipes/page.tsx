@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Globe2, Plus } from "lucide-react";
+import { Globe2, Plus, Beef, Wheat, Droplet } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CreateRecipeSheet } from "@/components/recipes/create-recipe-sheet";
 import { RecipeDetailSheet } from "@/components/recipes/recipe-detail-sheet";
@@ -28,6 +28,7 @@ export default function RecipesPage() {
   const [recipes, setRecipes] = useState<RecipeSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [editRecipeId, setEditRecipeId] = useState<string | null>(null);
   const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null);
 
   const loadRecipes = useCallback(async () => {
@@ -84,9 +85,9 @@ export default function RecipesPage() {
                   {formatNumber(recipe.macros.perServingCalories)} kcal
                 </span>
                 <div className="flex items-center gap-1.5">
-                  <MacroLetterBadge letter="P" value={recipe.macros.perServingProtein} color="var(--protein)" />
-                  <MacroLetterBadge letter="C" value={recipe.macros.perServingCarbs} color="var(--carbs)" />
-                  <MacroLetterBadge letter="F" value={recipe.macros.perServingFat} color="var(--fat)" />
+                  <MacroLetterBadge letter="P" value={recipe.macros.perServingProtein} color="var(--protein)" icon={Beef} />
+                  <MacroLetterBadge letter="C" value={recipe.macros.perServingCarbs} color="var(--carbs)" icon={Wheat} />
+                  <MacroLetterBadge letter="F" value={recipe.macros.perServingFat} color="var(--fat)" icon={Droplet} />
                 </div>
               </div>
             </button>
@@ -100,19 +101,32 @@ export default function RecipesPage() {
       </div>
 
       <button
-        onClick={() => setSheetOpen(true)}
+        onClick={() => {
+          setEditRecipeId(null);
+          setSheetOpen(true);
+        }}
         aria-label="New recipe"
         className="fixed bottom-[calc(64px+env(safe-area-inset-bottom)+16px)] right-5 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-[0_8px_24px_-6px_rgba(0,122,255,0.5)] transition-transform active:scale-90 lg:bottom-8 lg:right-8"
       >
         <Plus size={26} strokeWidth={2.3} />
       </button>
 
-      <CreateRecipeSheet open={sheetOpen} onOpenChange={setSheetOpen} onCreated={loadRecipes} />
+      <CreateRecipeSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        onSaved={loadRecipes}
+        editRecipeId={editRecipeId}
+      />
 
       <RecipeDetailSheet
         recipeId={selectedRecipeId}
         onOpenChange={(open) => !open && setSelectedRecipeId(null)}
         onChanged={loadRecipes}
+        onEdit={(id) => {
+          setSelectedRecipeId(null);
+          setEditRecipeId(id);
+          setSheetOpen(true);
+        }}
       />
     </>
   );

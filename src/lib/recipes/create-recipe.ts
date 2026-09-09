@@ -18,11 +18,9 @@ export class RecipeIngredientNotFoundError extends Error {
 
 type CreateRecipeInput = z.infer<typeof createRecipeSchema>;
 
-export async function createRecipe(userId: string, input: CreateRecipeInput) {
-  const { name, servings, ingredients, isPublic } = input;
-
-  // Foods are shared/public across all users (same as search results), so the
-  // only thing left to check is that every referenced id actually exists.
+// Foods are shared/public across all users (same as search results), so the
+// only thing left to check is that every referenced id actually exists.
+async function assertIngredientsExist(ingredients: CreateRecipeInput["ingredients"]) {
   const foodIds = [...new Set(ingredients.map((i) => i.foodId))];
   const referencedFoods = await db
     .select({ id: foods.id })
@@ -32,6 +30,12 @@ export async function createRecipe(userId: string, input: CreateRecipeInput) {
   if (referencedFoods.length !== foodIds.length) {
     throw new RecipeIngredientNotFoundError();
   }
+}
+
+export async function createRecipe(userId: string, input: CreateRecipeInput) {
+  const { name, servings, ingredients, isPublic } = input;
+
+  await assertIngredientsExist(ingredients);
 
   // neon-http doesn't support real transactions, so the recipe id is generated
   // up front and the ingredient insert is compensated with a delete on failure
@@ -53,6 +57,37 @@ export async function createRecipe(userId: string, input: CreateRecipeInput) {
     await db.delete(recipes).where(eq(recipes.id, recipeId));
     throw err;
   }
+
+  const details = await getRecipeIngredientDetails(recipeId);
+  const macros = sumRecipeMacros(details, servings);
+
+  return { id: recipeId, userId, name, servings, isPublic, ingredients: details, macros };
+}
+
+// Full edit: replaces the recipe's own row plus its entire ingredient list.
+// Same neon-http-no-transactions caveat as createRecipe — there's no rollback
+// if the ingredient insert fails after the old ones are deleted, but that's
+// an accepted risk consistent with the create path.
+export async function updateRecipe(recipeId: string, userId: string, input: CreateRecipeInput) {
+  const { name, servings, ingredients, isPublic } = input;
+
+  await assertIngredientsExist(ingredients);
+
+  await db
+    .update(recipes)
+    .set({ name, servings, isPublic, updatedAt: new Date() })
+    .where(eq(recipes.id, recipeId));
+
+  await db.delete(recipeIngredients).where(eq(recipeIngredients.recipeId, recipeId));
+  await db.insert(recipeIngredients).values(
+    ingredients.map((ing, index) => ({
+      recipeId,
+      foodId: ing.foodId,
+      amount: ing.amount,
+      amountLabel: ing.amountLabel || null,
+      sortOrder: index,
+    })),
+  );
 
   const details = await getRecipeIngredientDetails(recipeId);
   const macros = sumRecipeMacros(details, servings);

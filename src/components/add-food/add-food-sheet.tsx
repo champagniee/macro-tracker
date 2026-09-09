@@ -763,9 +763,9 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
                               : "border-separator bg-surface",
                           )}
                         >
-                          <div className="flex min-w-0 items-center gap-2.5">
+                          <div className="flex min-w-0 flex-1 items-center gap-2.5">
                             <CategoryBadge category={food.category} />
-                            <div className="min-w-0">
+                            <div className="min-w-0 flex-1">
                               <p className="truncate text-[14px] font-medium">{food.name}</p>
                               <p className="truncate text-[12px] text-muted">
                                 {food.brand ? `${food.brand} · ` : ""}
@@ -773,7 +773,9 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
                               </p>
                             </div>
                           </div>
-                          <p className="shrink-0 text-[12px] tabular-nums text-muted">{formatFoodStat(food)}</p>
+                          <p className="max-w-[35%] shrink-0 truncate text-right text-[12px] tabular-nums text-muted">
+                            {formatFoodStat(food)}
+                          </p>
                         </button>
                       ))}
                     </div>
@@ -835,13 +837,13 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
                               : "border-separator bg-surface",
                           )}
                         >
-                          <div className="flex min-w-0 items-center gap-2.5">
+                          <div className="flex min-w-0 flex-1 items-center gap-2.5">
                             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ring-track text-muted">
                               <ChefHat size={14} />
                             </span>
-                            <div className="min-w-0">
+                            <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5">
-                                <p className="truncate text-[14px] font-medium">{recipe.name}</p>
+                                <p className="min-w-0 flex-1 truncate text-[14px] font-medium">{recipe.name}</p>
                                 {recipe.isPublic && (
                                   <Globe2 size={11} className="shrink-0 text-muted-2" aria-label="Public recipe" />
                                 )}
