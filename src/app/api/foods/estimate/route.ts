@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
-import { estimateMacros } from "@/lib/llm/estimate-macros";
+import { estimateMacroItems } from "@/lib/llm/estimate-macros";
 import { estimateErrorMessage } from "@/lib/llm/error-message";
 
 const estimateRequestSchema = z
@@ -36,8 +36,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const estimate = await estimateMacros(parsed.data.description, parsed.data.image);
-    return NextResponse.json({ estimate });
+    const estimates = await estimateMacroItems(parsed.data.description, parsed.data.image);
+    return NextResponse.json({ estimates });
   } catch (err) {
     // Covers a missing GEMINI_API_KEY, the model being rate-limited/overloaded
     // (a real, observed failure mode on Gemini's free tier), or a malformed

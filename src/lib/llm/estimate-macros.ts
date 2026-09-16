@@ -161,3 +161,73 @@ export async function estimateMacros(description?: string, image?: MacroEstimate
     return JSON.parse(text) as MacroEstimate;
   });
 }
+
+// Splitting guidance layered on top of the single-item instructions above —
+// used only by the Add Food sheet's "Describe it" flow, where logging several
+// distinct foods as one blended-together entry loses per-food macros a user
+// might want to edit/reuse individually. estimate_macros/create_custom_food
+// (the MCP tools) keep the single-item estimateMacros above unchanged, since
+// both are explicitly about one food.
+const SPLIT_ITEMS_INSTRUCTION =
+  "\n\nThe description may name a single food/dish, or several distinct foods described together (a " +
+  "breakfast, a plate with sides, a few items eaten in one sitting). Decide how many items to return:\n" +
+  "- Return ONE item per food when the foods are separately identifiable and would normally be logged as " +
+  "their own entries — e.g. '2 eggs, toast, and orange juice', 'an apple and a protein bar', 'grilled " +
+  "chicken breast, steamed broccoli, and a scoop of rice'. Give each its own realistic macros for the " +
+  "amount described (assume a normal serving for anything left unstated).\n" +
+  "- Return exactly ONE item, categorized 'meal', only when the foods are physically combined into a single " +
+  "dish that can't be meaningfully logged apart — a stew, a sandwich, a casserole, a burrito, a stir-fry, " +
+  "or a plate of rice + viand described as one meal. Estimate the combined dish's total macros there, not " +
+  "each ingredient separately.\n" +
+  "- A description naming just one food or one dish still returns exactly one item.\n" +
+  "When it's unclear whether something is several distinguishable foods or one fused dish, prefer separate " +
+  "items — only combine when they genuinely can't be logged apart as eaten.";
+
+const MACRO_ESTIMATE_ITEMS_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    items: {
+      type: Type.ARRAY,
+      description: "One entry per distinct, separately-loggable food — see the splitting rules.",
+      items: MACRO_ESTIMATE_SCHEMA,
+    },
+  },
+  required: ["items"],
+};
+
+// Same call as estimateMacros, but lets the model split a description of
+// several distinct foods into one MacroEstimate per food instead of blending
+// them into a single entry — used by the Add Food sheet's "Describe it" mode
+// so e.g. "2 eggs and toast" logs as two reusable catalog foods, not one
+// made-up combo dish. A single food/dish still comes back as a one-item array.
+export async function estimateMacroItems(description?: string, image?: MacroEstimateImage): Promise<MacroEstimate[]> {
+  if (!description?.trim() && !image) {
+    throw new Error("Provide a description, a photo, or both.");
+  }
+
+  const parts: PartUnion[] = [];
+  if (description?.trim()) parts.push(description.trim());
+  if (image) parts.push({ inlineData: { data: image.data, mimeType: image.mimeType } });
+
+  return withGeminiRetry(async () => {
+    const response = await getGeminiClient().models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: parts,
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION + SPLIT_ITEMS_INSTRUCTION,
+        responseMimeType: "application/json",
+        responseSchema: MACRO_ESTIMATE_ITEMS_SCHEMA,
+      },
+    });
+
+    const text = response.text;
+    if (!text) {
+      throw new Error("Gemini returned no content for the macro estimate.");
+    }
+    const parsed = JSON.parse(text) as { items: MacroEstimate[] };
+    if (!parsed.items?.length) {
+      throw new Error("Gemini returned no items for the macro estimate.");
+    }
+    return parsed.items;
+  });
+}

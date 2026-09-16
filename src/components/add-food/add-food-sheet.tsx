@@ -416,6 +416,54 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
     setLastEstimate(estimate);
   }
 
+  // Turns an extra item from a multi-food "Describe it" estimate straight into
+  // a StagedFood, bypassing the form entirely — only the first item goes
+  // through applyEstimate for review/editing, the rest queue up alongside it
+  // the same way "Add another" does. Saved as a reusable custom food first
+  // (same reasoning as resolveCurrentForm: an AI-estimated food is first-class
+  // catalog content, not a one-off), best-effort — a failed save still stages
+  // the food, just without a foodId to log against.
+  async function stageEstimate(estimate: MacroEstimate) {
+    let foodId: string | undefined;
+    try {
+      const res = await fetch("/api/foods/custom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: estimate.name,
+          servingSize: estimate.servingSize,
+          servingUnit: estimate.servingUnit,
+          servingLabel: estimate.servingDescription || undefined,
+          category: estimate.category,
+          calories: Math.round(estimate.calories),
+          protein: Math.round(estimate.protein),
+          carbs: Math.round(estimate.carbs),
+          fat: Math.round(estimate.fat),
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        foodId = data.food.id;
+      }
+    } catch {
+      // Non-fatal — still staged below, just without a catalog foodId.
+    }
+
+    setStagedFoods((prev) => [
+      ...prev,
+      {
+        name: estimate.name,
+        serving: estimate.servingDescription,
+        category: estimate.category,
+        foodId,
+        calories: Math.round(estimate.calories),
+        protein: Math.round(estimate.protein),
+        carbs: Math.round(estimate.carbs),
+        fat: Math.round(estimate.fat),
+      },
+    ]);
+  }
+
   function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-selecting the same file later
@@ -446,8 +494,22 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Couldn't get an estimate");
-      applyEstimate(data.estimate);
-      setImage(null);
+      const estimates = data.estimates as MacroEstimate[];
+      if (estimates.length > 1) {
+        // Multiple distinct foods in one description (e.g. "2 eggs and toast")
+        // come back as separate items — stage all of them (sequentially, so
+        // the staged order matches the order they were described in) and
+        // reset the form, same as if "Add another" had been clicked for each.
+        // Leaving the last one sitting in the form instead was confusing: it
+        // read as not-yet-added, when Log already counted it either way.
+        for (const estimate of estimates) {
+          await stageEstimate(estimate);
+        }
+        resetFormFields();
+      } else {
+        applyEstimate(estimates[0]);
+        setImage(null);
+      }
     } catch (err) {
       setEstimateError(err instanceof Error ? err.message : "Couldn't get an estimate");
     } finally {
@@ -926,55 +988,55 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
                 />
               </div>
 
-              {isSearching && (
-                <div className="mb-5 flex flex-col gap-2">
-                  {searchingRecipes && <p className="px-1 text-[12px] text-muted-2">Searching…</p>}
+              <div className="mb-5 flex flex-col gap-2">
+                {searchingRecipes && <p className="px-1 text-[12px] text-muted-2">Searching…</p>}
 
-                  {!searchingRecipes && recipeResults.length > 0 && (
-                    <div className="no-scrollbar flex max-h-56 flex-col gap-1.5 overflow-y-auto">
-                      {recipeResults.map((recipe) => (
-                        <button
-                          key={recipe.id}
-                          type="button"
-                          onClick={() => applyRecipeResult(recipe)}
-                          className={cn(
-                            "flex items-center justify-between gap-3 rounded-[12px] border px-3 py-2.5 text-left transition-transform active:scale-[0.98]",
-                            selectedRecipeId === recipe.id
-                              ? "border-accent bg-accent/10"
-                              : "border-separator bg-surface",
-                          )}
-                        >
-                          <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ring-track text-muted">
-                              <ChefHat size={14} />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5">
-                                <p className="min-w-0 flex-1 truncate text-[14px] font-medium">{recipe.name}</p>
-                                {recipe.isPublic && (
-                                  <Globe2 size={11} className="shrink-0 text-muted-2" aria-label="Public recipe" />
-                                )}
-                              </div>
-                              <p className="truncate text-[12px] text-muted">
-                                {recipe.isOwner ? `${recipe.servings} servings` : `by ${recipe.ownerName}`}
-                              </p>
+                {!searchingRecipes && recipeResults.length > 0 && (
+                  <div className="no-scrollbar flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+                    {recipeResults.map((recipe) => (
+                      <button
+                        key={recipe.id}
+                        type="button"
+                        onClick={() => applyRecipeResult(recipe)}
+                        className={cn(
+                          "flex items-center justify-between gap-3 rounded-[12px] border px-3 py-2.5 text-left transition-transform active:scale-[0.98]",
+                          selectedRecipeId === recipe.id
+                            ? "border-accent bg-accent/10"
+                            : "border-separator bg-surface",
+                        )}
+                      >
+                        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ring-track text-muted">
+                            <ChefHat size={14} />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <p className="min-w-0 flex-1 truncate text-[14px] font-medium">{recipe.name}</p>
+                              {recipe.isPublic && (
+                                <Globe2 size={11} className="shrink-0 text-muted-2" aria-label="Public recipe" />
+                              )}
                             </div>
+                            <p className="truncate text-[12px] text-muted">
+                              {recipe.isOwner ? `${recipe.servings} servings` : `by ${recipe.ownerName}`}
+                            </p>
                           </div>
-                          <p className="shrink-0 text-[12px] tabular-nums text-muted">
-                            {Math.round(recipe.macros.perServingCalories)} kcal/serving
-                          </p>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                        </div>
+                        <p className="shrink-0 text-[12px] tabular-nums text-muted">
+                          {Math.round(recipe.macros.perServingCalories)} kcal/serving
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                )}
 
-                  {!searchingRecipes && recipeResults.length === 0 && (
-                    <p className="px-1 text-[12px] text-muted-2">
-                      No recipes found — create one from the Recipes tab.
-                    </p>
-                  )}
-                </div>
-              )}
+                {!searchingRecipes && recipeResults.length === 0 && (
+                  <p className="px-1 text-[12px] text-muted-2">
+                    {isSearching
+                      ? "No recipes found — create one from the Recipes tab."
+                      : "You don't have any recipes yet — create one from the Recipes tab."}
+                  </p>
+                )}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

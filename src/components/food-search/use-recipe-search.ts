@@ -17,16 +17,23 @@ export interface RecipeSearchResult {
   macros: RecipeMacros;
 }
 
-// Debounced GET /api/recipes?q= — same shape/behavior as useFoodSearch, for
-// the Add Food sheet's "Recipes" mode. Own recipes plus everyone else's
-// public ones, exactly what the list endpoint already returns.
+// GET /api/recipes?q= — same shape/behavior as useFoodSearch, for the Add
+// Food sheet's "Recipes" mode. Own recipes plus everyone else's public ones,
+// exactly what the list endpoint already returns.
+//
+// Unlike useFoodSearch, an empty query is a valid request here rather than a
+// no-op: it fetches the full list (own + public), so Recipes mode reads as a
+// browsable dropdown of your recipes that also happens to support search,
+// rather than a search box that only shows anything once you type. Fetched
+// immediately on empty/mount for a snappy initial list; debounced once
+// there's a query, same as before.
 export function useRecipeSearch(query: string) {
   const [results, setResults] = useState<RecipeSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const trimmed = query.trim();
-    if (trimmed.length < MIN_QUERY_LENGTH) {
+    if (trimmed.length > 0 && trimmed.length < MIN_QUERY_LENGTH) {
       setResults([]);
       setLoading(false);
       return;
@@ -35,17 +42,21 @@ export function useRecipeSearch(query: string) {
     let cancelled = false;
     setLoading(true);
 
-    const timeout = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/recipes?q=${encodeURIComponent(trimmed)}`);
-        const data = await res.json();
-        if (!cancelled) setResults(data.recipes ?? []);
-      } catch {
-        if (!cancelled) setResults([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }, DEBOUNCE_MS);
+    const timeout = setTimeout(
+      async () => {
+        try {
+          const url = trimmed ? `/api/recipes?q=${encodeURIComponent(trimmed)}` : "/api/recipes";
+          const res = await fetch(url);
+          const data = await res.json();
+          if (!cancelled) setResults(data.recipes ?? []);
+        } catch {
+          if (!cancelled) setResults([]);
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
+      },
+      trimmed ? DEBOUNCE_MS : 0,
+    );
 
     return () => {
       cancelled = true;
