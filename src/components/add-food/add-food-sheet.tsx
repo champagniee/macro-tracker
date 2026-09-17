@@ -200,7 +200,7 @@ export function AddFoodSheet({ open, onOpenChange, defaultMeal, entries, onSubmi
   // Facts/custom foods) replaces the recent-foods chips — recent chips are the
   // zero-effort "log what I always eat" path, search is for finding anything else.
   const { results: searchResults, warnings: searchWarnings, loading: searching } = useFoodSearch(query);
-  const { results: recipeResults, loading: searchingRecipes } = useRecipeSearch(query);
+  const { results: recipeResults, loading: searchingRecipes } = useRecipeSearch(query, open);
   const isSearching = query.trim().length >= 2;
 
   const canSubmit = form.name.trim().length > 0 && Number(form.calories) > 0;
