@@ -126,10 +126,15 @@ body {
   scrollbar-width: none;
 }
 
+/* Reduce Motion is meant for decorative/vestibular-triggering motion (parallax,
+   slides, bounces), not a functional status indicator — a frozen loading
+   spinner doesn't remove motion for a sensitive user, it just removes the
+   only sign that something is happening. .animate-spin is exempted so it
+   keeps spinning under Reduce Motion instead of silently looking stuck. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *:not(.animate-spin),
+  *:not(.animate-spin)::before,
+  *:not(.animate-spin)::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
